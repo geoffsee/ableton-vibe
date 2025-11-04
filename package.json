@@ -2,5 +2,8 @@
   "workspaces": ["ableton-vibes", "ableton-vibes/agent"],
   "scripts": {
     "dev": "(cd ableton-vibes && bun run dev)"
+  },
+  "dependencies": {
+    "ableton-js": "^3.7.1"
   }
 }
