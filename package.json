@@ -1,0 +1,6 @@
+{
+  "workspaces": ["ableton-vibes", "ableton-vibes/agent"],
+  "scripts": {
+    "dev": "(cd ableton-vibes && bun run dev)"
+  }
+}
