@@ -1,5 +1,6 @@
 import { Ableton } from "ableton-js";
 import { Color } from "ableton-js/util/color";
+import type { Clip } from "ableton-js/ns/clip";
 import type { ClipSlot } from "ableton-js/ns/clip-slot";
 import type { Track } from "ableton-js/ns/track";
 
@@ -17,6 +18,22 @@ export type ProjectSettings = {
   stop?: boolean;
 };
 
+export type ClipNoteBlueprint = {
+  pitch: number;
+  time?: number | string;
+  start?: number | string;
+  duration?: number | string;
+  length?: number | string;
+  velocity?: number;
+  muted?: boolean;
+};
+
+export type ClipBlueprint = {
+  name: string;
+  length?: string;
+  notes?: ClipNoteBlueprint[];
+};
+
 export type TrackBlueprint = {
   name: string;
   type?: "MIDI" | "Audio" | "Return";
@@ -24,10 +41,7 @@ export type TrackBlueprint = {
   colorHex?: string;
   mute?: boolean;
   arm?: boolean;
-  clips?: Array<{
-    name: string;
-    length?: string;
-  }>;
+  clips?: ClipBlueprint[];
 };
 
 export type AbletonSessionSnapshot = {
@@ -206,10 +220,10 @@ const parseClipLengthToBeats = (
 
 const ensureClip = async (
   track: Track,
-  clipName: string,
-  clipLength: string | undefined,
+  clipBlueprint: ClipBlueprint,
   beatsPerBar: number,
-) => {
+): Promise<{ clip: Clip; lengthBeats: number | null }> => {
+  const clipName = clipBlueprint.name;
   let clipSlots = await track.get("clip_slots");
 
   for (const slot of clipSlots) {
@@ -221,7 +235,8 @@ const ensureClip = async (
 
     const existingName = await clip.get("name");
     if (existingName.toLowerCase() === clipName.toLowerCase()) {
-      return;
+      const existingLength = await clip.get("length");
+      return { clip, lengthBeats: existingLength };
     }
   }
 
@@ -252,12 +267,124 @@ const ensureClip = async (
     throw new Error("Unable to find or create an empty clip slot.");
   }
 
-  const clipLengthInBeats = parseClipLengthToBeats(clipLength, beatsPerBar);
+  const clipLengthInBeats = parseClipLengthToBeats(clipBlueprint.length, beatsPerBar);
   await targetSlot.createClip(clipLengthInBeats);
 
   const clip = await targetSlot.get("clip");
   if (clip) {
     await clip.set("name", clipName);
+    await clip.set("loop_start", 0);
+    await clip.set("loop_end", clipLengthInBeats);
+    await clip.set("end_marker", clipLengthInBeats);
+    await clip.set("length", clipLengthInBeats);
+    return { clip, lengthBeats: clipLengthInBeats };
+  }
+
+  throw new Error(`Failed to obtain clip instance for "${clipName}".`);
+};
+
+const parseBeatsValue = (
+  value: number | string | undefined,
+  beatsPerBar: number,
+  fallback: number,
+): number => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim().toLowerCase();
+
+    const fractionMatch = trimmed.match(/^(-?\d+)\s*\/\s*(\d+)$/);
+    if (fractionMatch) {
+      const numerator = Number.parseFloat(fractionMatch[1]!);
+      const denominator = Number.parseFloat(fractionMatch[2]!);
+      if (!Number.isNaN(numerator) && !Number.isNaN(denominator) && denominator !== 0) {
+        return numerator / denominator;
+      }
+    }
+
+    const numeric = Number.parseFloat(trimmed.replace(/[^\d.-]/g, ""));
+    if (!Number.isNaN(numeric)) {
+      if (trimmed.includes("bar")) {
+        return numeric * beatsPerBar;
+      }
+      if (trimmed.includes("beat")) {
+        return numeric;
+      }
+      return numeric;
+    }
+  }
+
+  return fallback;
+};
+
+type MidiNote = {
+  pitch: number;
+  time: number;
+  duration: number;
+  velocity: number;
+  muted: boolean;
+};
+
+const sanitizeNotes = (
+  notes: ClipNoteBlueprint[],
+  beatsPerBar: number,
+): MidiNote[] => {
+  return notes
+    .map((note) => {
+      const rawPitch = Number(note.pitch);
+      if (!Number.isFinite(rawPitch)) return null;
+
+      const pitch = Math.max(0, Math.min(127, Math.round(rawPitch)));
+      const time = parseBeatsValue(note.time ?? note.start, beatsPerBar, 0);
+      const duration = Math.max(
+        0.03125,
+        parseBeatsValue(note.duration ?? note.length, beatsPerBar, 1),
+      );
+      const velocity = Math.max(0, Math.min(127, Math.round(note.velocity ?? 100)));
+      const muted = Boolean(note.muted);
+
+      return {
+        pitch,
+        time: Math.max(0, time),
+        duration,
+        velocity,
+        muted,
+      };
+    })
+    .filter((value): value is MidiNote => value !== null)
+    .sort((a, b) => a.time - b.time);
+};
+
+const populateClipNotes = async (
+  clip: Clip,
+  clipBlueprint: ClipBlueprint,
+  beatsPerBar: number,
+  fallbackLengthBeats: number | null,
+) => {
+  if (!clipBlueprint.notes?.length) return;
+
+  const notePayload = sanitizeNotes(clipBlueprint.notes, beatsPerBar);
+  if (!notePayload.length) return;
+
+  const existingLength = fallbackLengthBeats ?? (await clip.get("length"));
+  const furthestNote = notePayload.reduce(
+    (max, note) => Math.max(max, note.time + note.duration),
+    0,
+  );
+  const desiredLength = Math.max(existingLength ?? 0, furthestNote);
+
+  const span = Math.max(desiredLength, existingLength ?? 0, beatsPerBar);
+  await clip.removeNotes(0, 0, span + beatsPerBar, 128);
+  await clip.setNotes(notePayload);
+
+  if (desiredLength > 0) {
+    await clip.set("looping", true);
+    await clip.set("loop_start", 0);
+    await clip.set("start_marker", 0);
+    await clip.set("loop_end", desiredLength);
+    await clip.set("end_marker", desiredLength);
   }
 };
 
@@ -317,9 +444,19 @@ export const applyTrackBlueprint = async (blueprint: TrackBlueprint, beatsPerBar
   const trackType =
     isReturnTrack ? "Return" : blueprint.type ?? (await determineTrackType(workingTrack));
 
-  if (trackType !== "Return" && blueprint.clips?.length) {
+  if (
+    trackType !== "Return" &&
+    blueprint.clips?.length &&
+    (trackType === "MIDI" || blueprint.type === "MIDI" || trackType === "Unknown")
+  ) {
     for (const clipBlueprint of blueprint.clips) {
-      await ensureClip(workingTrack, clipBlueprint.name, clipBlueprint.length, safeBeatsPerBar);
+      const ensuredClip = await ensureClip(workingTrack, clipBlueprint, safeBeatsPerBar);
+      await populateClipNotes(
+        ensuredClip.clip,
+        clipBlueprint,
+        safeBeatsPerBar,
+        ensuredClip.lengthBeats,
+      );
     }
   }
 

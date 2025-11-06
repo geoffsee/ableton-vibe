@@ -186,7 +186,7 @@ const abletonUpsertTracks = tool(
       blueprintJson: z
         .string()
         .describe(
-          "JSON string describing either a single TrackBlueprint or an array of them. Each blueprint supports { name, type, colorIndex, arm, mute, clips: [{ name, length }] }.",
+          "JSON string describing either a single TrackBlueprint or an array of them. Each blueprint supports { name, type, colorIndex, arm, mute, clips: [{ name, length, notes: [{ pitch, time, duration, velocity, muted }] }] }.",
         ),
       timeSignature: z
         .string()
@@ -264,6 +264,7 @@ async function chat_node(state: AgentState, config: RunnableConfig) {
       "Act like a collaborative coproducer: design tracks, device chains, clip concepts, and Max for Live tools.",
       "Coordinate with the frontend actions to keep the workspace up to date.",
       "Prefer calling actions such as setProjectOverview, upsertAbletonTrack, removeAbletonTrack, setArrangementNotes, setNextActions, and setMaxPatchIdeas whenever you change the plan.",
+      "When creating clips, populate the notes array with pitch, time (beats), duration (beats), velocity, and muted flags so the Live clip is playable.",
       "Use abletonApplyProjectSettings, abletonUpsertTracks, abletonRemoveTrack, and abletonCaptureSessionSnapshot to control the Live set. Call grooveRecipe or maxPatchOutline for creative prompts.",
       `Current project snapshot: ${projectSummary}`,
     ].join("\n"),

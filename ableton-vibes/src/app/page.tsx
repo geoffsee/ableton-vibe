@@ -15,6 +15,13 @@ type AbletonClip = {
   length: string;
   clipType: "MIDI" | "Audio" | "Automation" | string;
   description?: string;
+  notes?: Array<{
+    pitch: number;
+    time?: number;
+    duration?: number;
+    velocity?: number;
+    muted?: boolean;
+  }>;
 };
 
 type MaxPatchIdea = {
@@ -108,6 +115,12 @@ const defaultProject: AbletonProjectState = {
           length: "8 bars",
           clipType: "MIDI",
           description: "Slowly opening filter with macro automation lanes.",
+          notes: [
+            { pitch: 53, time: 0, duration: 8, velocity: 100 },
+            { pitch: 57, time: 0, duration: 8, velocity: 96 },
+            { pitch: 60, time: 0, duration: 8, velocity: 94 },
+            { pitch: 65, time: 4, duration: 4, velocity: 92 },
+          ],
         },
       ],
       maxPatch: {
@@ -139,6 +152,18 @@ const defaultProject: AbletonProjectState = {
           clipType: "MIDI",
           description:
             "Kick on 1, syncopated hats, ghost claps on 2e+, open hat on bar 4.",
+          notes: [
+            { pitch: 36, time: 0, duration: 1, velocity: 120 },
+            { pitch: 36, time: 2, duration: 1, velocity: 118 },
+            { pitch: 36, time: 4, duration: 1, velocity: 118 },
+            { pitch: 36, time: 6, duration: 1, velocity: 118 },
+            { pitch: 42, time: 0, duration: 0.5, velocity: 96 },
+            { pitch: 42, time: 1, duration: 0.5, velocity: 96 },
+            { pitch: 42, time: 2, duration: 0.5, velocity: 94 },
+            { pitch: 42, time: 3, duration: 0.5, velocity: 94 },
+            { pitch: 44, time: 1.5, duration: 0.5, velocity: 102 },
+            { pitch: 46, time: 3.75, duration: 0.25, velocity: 110 },
+          ],
         },
       ],
     },
