@@ -3,6 +3,8 @@ import { Color } from "ableton-js/util/color";
 import type { Clip } from "ableton-js/ns/clip";
 import type { ClipSlot } from "ableton-js/ns/clip-slot";
 import type { Track } from "ableton-js/ns/track";
+import fs from "fs";
+import path from "path";
 
 let ableton: Ableton | null = null;
 let connectPromise: Promise<Ableton> | null = null;
@@ -276,7 +278,7 @@ const ensureClip = async (
     await clip.set("loop_start", 0);
     await clip.set("loop_end", clipLengthInBeats);
     await clip.set("end_marker", clipLengthInBeats);
-    await clip.set("length", clipLengthInBeats);
+    // Note: "length" is read-only; use loop_end/end_marker to control clip length
     return { clip, lengthBeats: clipLengthInBeats };
   }
 
@@ -514,7 +516,8 @@ export const captureSessionSnapshot = async (): Promise<AbletonSessionSnapshot> 
 
       let colorHex: string | null = null;
       try {
-        const color = new Color(colorNumber);
+        // colorNumber from ableton-js is already a Color; cast to number for the Color constructor
+        const color = new Color(colorNumber as unknown as number);
         colorHex = color.hex;
       } catch {
         colorHex = null;
@@ -538,4 +541,60 @@ export const captureSessionSnapshot = async (): Promise<AbletonSessionSnapshot> 
     isPlaying,
     tracks: trackSummaries,
   };
+};
+
+// -- Samples: insert audio files into an audio track as audio clips --
+
+const expandHome = (p: string) => (p.startsWith("~") ? path.join(process.env.HOME || "", p.slice(1)) : p);
+
+const fileExists = (p: string) => {
+  try {
+    return fs.existsSync(p) && fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
+};
+
+const ensureAudioTrack = async (name?: string): Promise<Track> => {
+  const instance = await getAbleton();
+  if (name) {
+    const { track } = await locateTrackByName(name);
+    if (track) {
+      // If track exists and is not an audio track, create a new audio track instead
+      const type = await determineTrackType(track);
+      if (type === "Audio" || type === "Unknown") {
+        return track;
+      }
+    }
+  }
+
+  const newTrack = await instance.song.createAudioTrack();
+  if (name) {
+    try { await newTrack.set("name", name); } catch {}
+  }
+  return newTrack;
+};
+
+export const insertSampleAsClip = async (filePath: string, opts?: { trackName?: string; positionBeats?: number }) => {
+  const instance = await getAbleton();
+  const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(expandHome(filePath));
+  if (!fileExists(resolved)) {
+    throw new Error(`Sample file not found: ${filePath}`);
+  }
+
+  const track = await ensureAudioTrack(opts?.trackName);
+  const position = typeof opts?.positionBeats === "number" && Number.isFinite(opts.positionBeats!)
+    ? Math.max(0, opts!.positionBeats!)
+    : 0;
+
+  // Ensure transport is stopped before inserting (safer UX)
+  try {
+    const isPlaying = await instance.song.get("is_playing");
+    if (isPlaying) await instance.song.safeStopPlaying();
+  } catch {}
+
+  await track.createAudioClip(resolved, position);
+
+  const trackName = await track.get("name");
+  return `Inserted audio clip from \"${path.basename(resolved)}\" on track \"${trackName}\" at ${position} beats.`;
 };

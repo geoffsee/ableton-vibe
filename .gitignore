@@ -32,3 +32,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Finder (MacOS) folder config
 .DS_Store
+.agent.log
+.agent.pid
+.*-mcp/
+.ui.log
+.ui.pid
+CLAUDE.md

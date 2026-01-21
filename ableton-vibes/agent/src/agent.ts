@@ -21,6 +21,11 @@ import {
   TrackBlueprint,
   removeTrackByName,
 } from "./abletonClient";
+import { searchSamples } from "./sampleFinder";
+import { insertSampleAsClip } from "./abletonClient";
+
+// Import workflow tools for music production stages
+import { allWorkflowTools } from "./workflow/stages";
 
 // 1. Define our agent state, which includes CopilotKit state to
 //    provide actions to the state.
@@ -237,12 +242,51 @@ const tools = [
   abletonUpsertTracks,
   abletonRemoveTrack,
   abletonCaptureSnapshot,
+  // Music production workflow tools (stages 1-9)
+  ...allWorkflowTools,
+  // sample tools
+  tool(
+    async ({ query, roots, exts, bpmMin, bpmMax, key, limit }) => {
+      const results = await searchSamples({ query, roots, exts, bpmMin, bpmMax, key, limit });
+      return JSON.stringify({ count: results.length, results });
+    },
+    {
+      name: "sampleSearch",
+      description:
+        "Search local folders for audio samples by keyword, BPM range, musical key, and file extension. Defaults to common sample directories.",
+      schema: z.object({
+        query: z.string().optional().describe("Keywords to match in file path; use -term to exclude."),
+        roots: z.array(z.string()).optional().describe("Directories to search; defaults to common sample folders or SAMPLE_DIRS env var."),
+        exts: z.array(z.string()).optional().describe("File extensions to include (e.g. ['wav','aiff'])."),
+        bpmMin: z.number().optional().describe("Minimum BPM, inferred from filename if present."),
+        bpmMax: z.number().optional().describe("Maximum BPM, inferred from filename if present."),
+        key: z.string().optional().describe("Musical key to match (e.g. 'F#m', 'C minor')."),
+        limit: z.number().optional().describe("Max results to return (default 20)."),
+      }),
+    },
+  ),
+  tool(
+    async ({ filePath, trackName, positionBeats }) => {
+      const msg = await insertSampleAsClip(filePath, { trackName, positionBeats });
+      return msg;
+    },
+    {
+      name: "abletonInsertSampleClip",
+      description:
+        "Insert an audio file as an audio clip into an audio track at a given arrangement position (in beats). Creates the track if needed.",
+      schema: z.object({
+        filePath: z.string().min(1).describe("Absolute or relative path to an audio file (wav, aiff, mp3, flac, etc.)."),
+        trackName: z.string().optional().describe("Target audio track name; a new one is created if missing."),
+        positionBeats: z.number().optional().describe("Arrangement position in beats (default 0)."),
+      }),
+    },
+  ),
 ];
 
 // 5. Define the chat node, which will handle the chat logic
 async function chat_node(state: AgentState, config: RunnableConfig) {
   // 5.1 Define the model, lower temperature for deterministic responses
-  const model = new ChatOpenAI({ temperature: 0, model: "gpt-4o" });
+  const model = new ChatOpenAI({ temperature: 0, model: "gpt-4.1" });
 
   // 5.2 Bind the tools to the model, include CopilotKit actions. This allows
   //     the model to call tools that are defined in CopilotKit by the frontend.
@@ -265,7 +309,20 @@ async function chat_node(state: AgentState, config: RunnableConfig) {
       "Coordinate with the frontend actions to keep the workspace up to date.",
       "Prefer calling actions such as setProjectOverview, upsertAbletonTrack, removeAbletonTrack, setArrangementNotes, setNextActions, and setMaxPatchIdeas whenever you change the plan.",
       "When creating clips, populate the notes array with pitch, time (beats), duration (beats), velocity, and muted flags so the Live clip is playable.",
-      "Use abletonApplyProjectSettings, abletonUpsertTracks, abletonRemoveTrack, and abletonCaptureSessionSnapshot to control the Live set. Call grooveRecipe or maxPatchOutline for creative prompts.",
+      "Use abletonApplyProjectSettings, abletonUpsertTracks, abletonRemoveTrack, and abletonCaptureSessionSnapshot to control the Live set. Use sampleSearch to find audio samples locally and abletonInsertSampleClip to place them in the arrangement. Call grooveRecipe or maxPatchOutline for creative prompts.",
+      "",
+      "MUSIC PRODUCTION WORKFLOW:",
+      "When creating full tracks, follow these 9 stages using the workflow tools:",
+      "1. Brief Ingestion (workflowIngestBrief, workflowLockIntent) - Capture genre, mood, references, and rules",
+      "2. Style Prior (workflowBuildStylePrior) - Define BPM signature, swing profile, sound design traits",
+      "3. Time Base (workflowGenerateGrooves, workflowScoreGrooves, workflowSelectTimeBase) - Create the foundation groove",
+      "4. Palette (workflowAssemblePalette, workflowValidatePaletteCoverage) - Select sounds covering frequency spectrum",
+      "5. Motif Seeds (workflowGenerateMotifs, workflowScoreMotifs, workflowSelectTopMotifs) - Create melodic/rhythmic/harmonic seeds",
+      "6. Macro Structure (workflowDraftMacroStructure, workflowValidateEnergyCurve) - Plan arrangement sections and energy curve",
+      "7. Compose (workflowComposeSection, workflowScoreComposition, workflowComposeAllSections) - Orchestrate each section",
+      "8. Variations (workflowApplyVariation, workflowGenerateEarCandy, workflowRunVariationPass) - Add variety and transitions",
+      "9. Mix Design (workflowAssembleMixDesign) - Create leveling, EQ/compression, spatial, and automation plans",
+      "",
       `Current project snapshot: ${projectSummary}`,
     ].join("\n"),
   });
@@ -284,30 +341,30 @@ async function chat_node(state: AgentState, config: RunnableConfig) {
 
 // 6. Define the function that determines whether to continue or not,
 //    this is used to determine the next node to run
-function shouldContinue({ messages, copilotkit }: AgentState) {
+function shouldContinue({ messages }: AgentState) {
   // 6.1 Get the last message from the state
   const lastMessage = messages[messages.length - 1] as AIMessage;
 
   // 7.2 If the LLM makes a tool call, then we route to the "tools" node
   if (lastMessage.tool_calls?.length) {
-    // Actions are the frontend tools coming from CopilotKit
-    const actions = copilotkit?.actions;
-    const toolCallName = lastMessage.tool_calls![0].name;
-
-    // 7.3 Only route to the tool node if the tool call is not a CopilotKit action
-    if (!actions || actions.every((action) => action.name !== toolCallName)) {
-      return "tool_node"
-    }
+    return "tool_node";
   }
 
   // 6.4 Otherwise, we stop (reply to the user) using the special "__end__" node
   return "__end__";
 }
 
+// Define a dynamic tool node that merges static tools with CopilotKit actions
+async function dynamic_tool_node(state: AgentState, config: RunnableConfig) {
+  const dynamicTools = convertActionsToDynamicStructuredTools(state.copilotkit?.actions ?? []);
+  const node = new ToolNode([...tools, ...dynamicTools]);
+  return node.invoke(state as any, config as any);
+}
+
 // Define the workflow graph
 const workflow = new StateGraph(AgentStateAnnotation)
   .addNode("chat_node", chat_node)
-  .addNode("tool_node", new ToolNode(tools))
+  .addNode("tool_node", dynamic_tool_node)
   .addEdge(START, "chat_node")
   .addEdge("tool_node", "chat_node")
   .addConditionalEdges("chat_node", shouldContinue as any);

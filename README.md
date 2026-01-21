@@ -10,3 +10,9 @@ open http://localhost:3000
 echo "???"
 echo "profit"
 ```
+
+Optional: configure sample search directories
+```shell
+# Comma- or semicolon-separated directories to search for audio samples
+export SAMPLE_DIRS="/Volumes/Samples;~/Music/Samples"
+```

@@ -4,174 +4,64 @@ import { useCoAgent, useCopilotAction } from "@copilotkit/react-core";
 import { CopilotKitCSSProperties, CopilotSidebar } from "@copilotkit/react-ui";
 import { useMemo, useState } from "react";
 
-type AbletonDevice = {
-  name: string;
-  category: "Instrument" | "Audio Effect" | "MIDI Effect" | "Max for Live" | string;
-  notes?: string;
-};
+// Types
+import {
+  WorkflowStage,
+  WorkflowUIState,
+  AbletonProjectState,
+  AbletonAgentState,
+  ProductionBrief,
+  ProductionSpec,
+  StylePrior,
+  GrooveCandidate,
+  GrooveScore,
+  TimeBase,
+  SoundPalette,
+  MotifSeedSet,
+  MacroStructure,
+  ArrangementSection,
+  SectionComposition,
+  VariationPass,
+  MixDesign,
+  AbletonTrack,
+  MaxPatchIdea,
+  WORKFLOW_STAGES,
+  STAGE_CONFIG,
+} from "./components/types";
 
-type AbletonClip = {
-  name: string;
-  length: string;
-  clipType: "MIDI" | "Audio" | "Automation" | string;
-  description?: string;
-  notes?: Array<{
-    pitch: number;
-    time?: number;
-    duration?: number;
-    velocity?: number;
-    muted?: boolean;
-  }>;
-};
+// Components
+import { WorkflowStepper } from "./components/workflow";
+import {
+  BriefWizard,
+  StylePriorPanel,
+  TimeBasePanel,
+  PalettePanel,
+  MotifSeedsPanel,
+  MacroStructurePanel,
+  ComposePanel,
+  VariationsPanel,
+  MixDesignPanel,
+} from "./components/stages";
 
-type MaxPatchIdea = {
-  id: string;
-  name: string;
-  description: string;
-  devices?: string[];
-  modulationTargets?: string[];
-};
-
-type AbletonTrack = {
-  id: string;
-  name: string;
-  type: "MIDI" | "Audio" | "Return" | string;
-  color?: string;
-  role?: string;
-  notes?: string;
-  devices: AbletonDevice[];
-  clips: AbletonClip[];
-  maxPatch?: MaxPatchIdea | null;
-};
-
-type AbletonProjectState = {
-  projectName: string;
-  genre: string;
-  vibe: string;
-  tempo: number;
-  key: string;
-  timeSignature: string;
-  arrangementNotes: string;
-  sessionViewNotes: string;
-  nextActions: string[];
-  maxPatchIdeas: MaxPatchIdea[];
-  tracks: AbletonTrack[];
-};
-
-type AbletonAgentState = {
-  project: AbletonProjectState;
-};
-
+// Default states
 const defaultProject: AbletonProjectState = {
-  projectName: "Ableton Copilot Jam",
-  genre: "Lush techno",
-  vibe: "Deep, evolving pads with playful percussion",
-  tempo: 122,
-  key: "F minor",
+  projectName: "New Production",
+  genre: "",
+  vibe: "",
+  tempo: 120,
+  key: "C major",
   timeSignature: "4/4",
-  arrangementNotes:
-    "Design a structure with an 8-bar evolving intro, 32-bar groove, a tension breakdown with filtered pads, and a driving final drop that introduces granular percussion.",
-  sessionViewNotes:
-    "Populate clip slots with evolving pads, syncopated stabs, and automation-ready macro mappings. Use scene names for sections (Intro, Groove, Breakdown, Drop, Outro).",
-  nextActions: [
-    "Ask the assistant to sketch an arrangement roadmap with bar counts.",
-    "Request a Max for Live modulation patch to morph pad macros over time.",
-    "Have the assistant design drum rack macros for live performance tweaks.",
-  ],
-  maxPatchIdeas: [
-    {
-      id: "max-evo-01",
-      name: "Macro Drift Evolver",
-      description:
-        "Automates slow LFO-driven morphing between pad macro states with randomised phase offsets.",
-      devices: ["LFO", "Max Envelope Follower"],
-      modulationTargets: ["Pad rack macro 1", "Pad rack macro 4"],
-    },
-  ],
-  tracks: [
-    {
-      id: "track-pad",
-      name: "Opaline Pads",
-      type: "MIDI",
-      color: "#8b5cf6",
-      role: "Atmospheric bed",
-      notes: "Wavetable > Pad Nodes preset with custom macro for shimmer amount.",
-      devices: [
-        { name: "Wavetable", category: "Instrument", notes: "Pad Nodes preset" },
-        {
-          name: "Hybrid Reverb",
-          category: "Audio Effect",
-          notes: "Dark hall IR, blend 42%",
-        },
-        {
-          name: "Shimmer",
-          category: "Audio Effect",
-          notes: "Feedback 18%, pitch +12",
-        },
-      ],
-      clips: [
-        {
-          name: "Intro pad swell",
-          length: "8 bars",
-          clipType: "MIDI",
-          description: "Slowly opening filter with macro automation lanes.",
-          notes: [
-            { pitch: 53, time: 0, duration: 8, velocity: 100 },
-            { pitch: 57, time: 0, duration: 8, velocity: 96 },
-            { pitch: 60, time: 0, duration: 8, velocity: 94 },
-            { pitch: 65, time: 4, duration: 4, velocity: 92 },
-          ],
-        },
-      ],
-      maxPatch: {
-        id: "max-pad-morph",
-        name: "Pad Macro Morph",
-        description:
-          "Max for Live LFO device with phase-shifted modulation to morph pad macros over 32 bars.",
-        devices: ["LFO", "Envelope Follower"],
-        modulationTargets: ["Macro 1", "Macro 5"],
-      },
-    },
-    {
-      id: "track-drums",
-      name: "Percussive Playground",
-      type: "MIDI",
-      color: "#f97316",
-      role: "Groove engine",
-      notes:
-        "Drum rack with layered kicks, foley hats, and Max Shaper for transient emphasis.",
-      devices: [
-        { name: "Drum Rack", category: "Instrument", notes: "Custom kit" },
-        { name: "Saturator", category: "Audio Effect", notes: "Analog curve" },
-        { name: "Max Humanizer", category: "Max for Live", notes: "Velocity variance 12%" },
-      ],
-      clips: [
-        {
-          name: "Main groove",
-          length: "4 bars",
-          clipType: "MIDI",
-          description:
-            "Kick on 1, syncopated hats, ghost claps on 2e+, open hat on bar 4.",
-          notes: [
-            { pitch: 36, time: 0, duration: 1, velocity: 120 },
-            { pitch: 36, time: 2, duration: 1, velocity: 118 },
-            { pitch: 36, time: 4, duration: 1, velocity: 118 },
-            { pitch: 36, time: 6, duration: 1, velocity: 118 },
-            { pitch: 42, time: 0, duration: 0.5, velocity: 96 },
-            { pitch: 42, time: 1, duration: 0.5, velocity: 96 },
-            { pitch: 42, time: 2, duration: 0.5, velocity: 94 },
-            { pitch: 42, time: 3, duration: 0.5, velocity: 94 },
-            { pitch: 44, time: 1.5, duration: 0.5, velocity: 102 },
-            { pitch: 46, time: 3.75, duration: 0.25, velocity: 110 },
-          ],
-        },
-      ],
-    },
-  ],
+  arrangementNotes: "",
+  sessionViewNotes: "",
+  nextActions: [],
+  maxPatchIdeas: [],
+  tracks: [],
 };
 
-const sectionLabelStyles =
-  "uppercase tracking-widest text-xs text-white/60 font-semibold";
+const defaultWorkflow: WorkflowUIState = {
+  currentStage: "briefIngestion",
+  stagesCompleted: [],
+};
 
 export default function CopilotKitPage() {
   const [themeColor, setThemeColor] = useState("#7c3aed");
@@ -196,30 +86,33 @@ export default function CopilotKitPage() {
       style={{ "--copilot-kit-primary-color": themeColor } as CopilotKitCSSProperties}
       className="min-h-screen bg-slate-950"
     >
-      <AbletonBuilder themeColor={themeColor} />
+      <AbletonWorkflowBuilder themeColor={themeColor} />
       <CopilotSidebar
         clickOutsideToClose={false}
         defaultOpen
         labels={{
           title: "Ableton Live Copilot",
           initial:
-            "🎛️ Hi producer! I'm ready to help you build an Ableton Live 12 + Max 9 session.\n\nTry asking for:\n- Project overview updates (tempo, key, vibe)\n- New track concepts with devices and clip ideas\n- Max for Live patch sketches for modulation or performance\n- Next actions to keep the creative flow moving",
+            "Hi producer! I'm ready to help you create music from scratch.\n\nFollow the 9-stage workflow to build your track:\n1. Brief & Intent - Define your vision\n2. Style Prior - Set sonic character\n3. Time Base - Establish groove\n4. Palette - Curate sounds\n5. Motifs - Generate ideas\n6. Structure - Design arrangement\n7. Compose - Orchestrate sections\n8. Variations - Add ear candy\n9. Mix - Design the final sound\n\nTell me about the music you want to create!",
         }}
       />
     </main>
   );
 }
 
-function AbletonBuilder({ themeColor }: { themeColor: string }) {
+function AbletonWorkflowBuilder({ themeColor }: { themeColor: string }) {
   const { state, setState } = useCoAgent<AbletonAgentState>({
     name: "starterAgent",
     initialState: {
       project: defaultProject,
+      workflow: defaultWorkflow,
     },
   });
 
   const project = useMemo(() => state.project ?? defaultProject, [state.project]);
+  const workflow = useMemo(() => state.workflow ?? defaultWorkflow, [state.workflow]);
 
+  // Safe JSON parser helper
   const safeJsonParse = <T,>(value: unknown): T | null => {
     if (typeof value !== "string") return null;
     try {
@@ -230,427 +123,517 @@ function AbletonBuilder({ themeColor }: { themeColor: string }) {
     }
   };
 
+  // Update helpers
   const updateProject = (updates: Partial<AbletonProjectState>) => {
     setState({
       ...state,
-      project: {
-        ...project,
-        ...updates,
-      },
+      project: { ...project, ...updates },
     });
   };
 
-  const upsertTrack = (trackPayload: Partial<AbletonTrack> & { id: string }) => {
-    const sanitizedTrack: AbletonTrack = {
-      id: trackPayload.id,
-      name: trackPayload.name ?? `Track ${trackPayload.id}`,
-      type: trackPayload.type ?? "MIDI",
-      color: trackPayload.color,
-      role: trackPayload.role,
-      notes: trackPayload.notes,
-      devices: trackPayload.devices ?? [],
-      clips: trackPayload.clips ?? [],
-      maxPatch: trackPayload.maxPatch ?? null,
-    };
-
-    const existingIndex = project.tracks.findIndex((t) => t.id === sanitizedTrack.id);
-    const nextTracks =
-      existingIndex === -1
-        ? [...project.tracks, sanitizedTrack]
-        : project.tracks.map((track, idx) =>
-            idx === existingIndex
-              ? {
-                  ...track,
-                  ...sanitizedTrack,
-                  devices: sanitizedTrack.devices,
-                  clips: sanitizedTrack.clips,
-                  maxPatch: sanitizedTrack.maxPatch ?? null,
-                }
-              : track,
-          );
-
-    updateProject({ tracks: nextTracks });
+  const updateWorkflow = (updates: Partial<WorkflowUIState>) => {
+    setState({
+      ...state,
+      workflow: { ...workflow, ...updates },
+    });
   };
 
+  const setCurrentStage = (stage: WorkflowStage) => {
+    updateWorkflow({ currentStage: stage });
+  };
+
+  const markStageComplete = (stage: WorkflowStage) => {
+    const completed = workflow.stagesCompleted.includes(stage)
+      ? workflow.stagesCompleted
+      : [...workflow.stagesCompleted, stage];
+
+    // Auto-advance to next stage
+    const currentIndex = WORKFLOW_STAGES.indexOf(stage);
+    const nextStage = WORKFLOW_STAGES[currentIndex + 1];
+
+    updateWorkflow({
+      stagesCompleted: completed,
+      currentStage: nextStage || stage,
+    });
+  };
+
+  // === CopilotKit Actions for Workflow ===
+
+  useCopilotAction({
+    name: "setWorkflowStage",
+    description: "Navigate to a specific workflow stage",
+    parameters: [
+      { name: "stage", description: "The workflow stage to navigate to", required: true },
+    ],
+    handler: ({ stage }) => {
+      if (WORKFLOW_STAGES.includes(stage as WorkflowStage)) {
+        setCurrentStage(stage as WorkflowStage);
+      }
+    },
+  });
+
+  useCopilotAction({
+    name: "updateBrief",
+    description: "Update the production brief (stage 1)",
+    parameters: [
+      { name: "briefJson", description: "JSON string of ProductionBrief", required: true },
+    ],
+    handler: ({ briefJson }) => {
+      const brief = safeJsonParse<ProductionBrief>(briefJson);
+      if (brief) updateWorkflow({ brief });
+    },
+  });
+
+  useCopilotAction({
+    name: "setProductionSpec",
+    description: "Set the production spec derived from brief",
+    parameters: [
+      { name: "specJson", description: "JSON string of ProductionSpec", required: true },
+    ],
+    handler: ({ specJson }) => {
+      const spec = safeJsonParse<ProductionSpec>(specJson);
+      if (spec) updateWorkflow({ spec });
+    },
+  });
+
+  useCopilotAction({
+    name: "setStylePrior",
+    description: "Set the style prior (stage 2)",
+    parameters: [
+      { name: "priorJson", description: "JSON string of StylePrior", required: true },
+    ],
+    handler: ({ priorJson }) => {
+      const stylePrior = safeJsonParse<StylePrior>(priorJson);
+      if (stylePrior) updateWorkflow({ stylePrior });
+    },
+  });
+
+  useCopilotAction({
+    name: "setGrooveCandidates",
+    description: "Set groove candidates for stage 3",
+    parameters: [
+      { name: "candidatesJson", description: "JSON array of GrooveCandidate", required: true },
+    ],
+    handler: ({ candidatesJson }) => {
+      const candidates = safeJsonParse<GrooveCandidate[]>(candidatesJson);
+      if (candidates) updateWorkflow({ grooveCandidates: candidates });
+    },
+  });
+
+  useCopilotAction({
+    name: "setGrooveScores",
+    description: "Set groove scores for candidates",
+    parameters: [
+      { name: "scoresJson", description: "JSON array of GrooveScore", required: true },
+    ],
+    handler: ({ scoresJson }) => {
+      const scores = safeJsonParse<GrooveScore[]>(scoresJson);
+      if (scores) updateWorkflow({ grooveScores: scores });
+    },
+  });
+
+  useCopilotAction({
+    name: "selectTimeBase",
+    description: "Lock in the selected time base (stage 3)",
+    parameters: [
+      { name: "timeBaseJson", description: "JSON string of TimeBase", required: true },
+    ],
+    handler: ({ timeBaseJson }) => {
+      const timeBase = safeJsonParse<TimeBase>(timeBaseJson);
+      if (timeBase) {
+        updateWorkflow({ timeBase });
+        updateProject({ tempo: timeBase.finalTempo, timeSignature: timeBase.finalMeter });
+      }
+    },
+  });
+
+  useCopilotAction({
+    name: "setPalette",
+    description: "Set the sound palette (stage 4)",
+    parameters: [
+      { name: "paletteJson", description: "JSON string of SoundPalette", required: true },
+    ],
+    handler: ({ paletteJson }) => {
+      const palette = safeJsonParse<SoundPalette>(paletteJson);
+      if (palette) updateWorkflow({ palette });
+    },
+  });
+
+  useCopilotAction({
+    name: "setMotifSeedSet",
+    description: "Set the motif seed set (stage 5)",
+    parameters: [
+      { name: "motifSetJson", description: "JSON string of MotifSeedSet", required: true },
+    ],
+    handler: ({ motifSetJson }) => {
+      const motifSeedSet = safeJsonParse<MotifSeedSet>(motifSetJson);
+      if (motifSeedSet) updateWorkflow({ motifSeedSet });
+    },
+  });
+
+  useCopilotAction({
+    name: "setMacroStructure",
+    description: "Set the macro structure (stage 6)",
+    parameters: [
+      { name: "structureJson", description: "JSON string of MacroStructure", required: true },
+    ],
+    handler: ({ structureJson }) => {
+      const macroStructure = safeJsonParse<MacroStructure>(structureJson);
+      if (macroStructure) updateWorkflow({ macroStructure });
+    },
+  });
+
+  useCopilotAction({
+    name: "setCompositions",
+    description: "Set section compositions (stage 7)",
+    parameters: [
+      { name: "compositionsJson", description: "JSON array of SectionComposition", required: true },
+    ],
+    handler: ({ compositionsJson }) => {
+      const compositions = safeJsonParse<SectionComposition[]>(compositionsJson);
+      if (compositions) updateWorkflow({ compositions });
+    },
+  });
+
+  useCopilotAction({
+    name: "setVariationPasses",
+    description: "Set variation passes (stage 8)",
+    parameters: [
+      { name: "passesJson", description: "JSON array of VariationPass", required: true },
+    ],
+    handler: ({ passesJson }) => {
+      const variationPasses = safeJsonParse<VariationPass[]>(passesJson);
+      if (variationPasses) updateWorkflow({ variationPasses });
+    },
+  });
+
+  useCopilotAction({
+    name: "setMixDesign",
+    description: "Set the mix design (stage 9)",
+    parameters: [
+      { name: "mixJson", description: "JSON string of MixDesign", required: true },
+    ],
+    handler: ({ mixJson }) => {
+      const mixDesign = safeJsonParse<MixDesign>(mixJson);
+      if (mixDesign) updateWorkflow({ mixDesign });
+    },
+  });
+
+  // Legacy actions for backward compatibility
   useCopilotAction({
     name: "setProjectOverview",
-    description:
-      "Update the Ableton project overview (name, tempo, key, vibe, arrangement notes, session notes).",
+    description: "Update the Ableton project overview",
     parameters: [
-      {
-        name: "projectOverviewJson",
-        description:
-          "JSON string with fields like projectName, genre, vibe, tempo, key, timeSignature, arrangementNotes, sessionViewNotes.",
-        required: true,
-      },
+      { name: "projectOverviewJson", description: "JSON with project fields", required: true },
     ],
     handler: ({ projectOverviewJson }) => {
       const parsed = safeJsonParse<Partial<AbletonProjectState>>(projectOverviewJson);
-      if (!parsed) return;
-
-      updateProject({
-        ...parsed,
-        tempo: typeof parsed.tempo === "number" ? parsed.tempo : project.tempo,
-      });
+      if (parsed) updateProject(parsed);
     },
   });
 
   useCopilotAction({
     name: "upsertAbletonTrack",
-    description:
-      "Add a new Ableton track or update an existing one. Include an id to keep updates stable.",
+    description: "Add or update an Ableton track",
     parameters: [
-      {
-        name: "trackJson",
-        description:
-          "JSON string describing the track: { id, name, type, role, color, notes, devices: [{name, category, notes}], clips: [{name, length, clipType, description}], maxPatch }.",
-        required: true,
-      },
+      { name: "trackJson", description: "JSON string of track data", required: true },
     ],
     handler: ({ trackJson }) => {
-      const parsed = safeJsonParse<Partial<AbletonTrack> & { id: string }>(trackJson);
-      if (!parsed?.id) return;
-      upsertTrack(parsed);
+      const track = safeJsonParse<Partial<AbletonTrack> & { id: string }>(trackJson);
+      if (!track?.id) return;
+
+      const sanitizedTrack: AbletonTrack = {
+        id: track.id,
+        name: track.name ?? `Track ${track.id}`,
+        type: track.type ?? "MIDI",
+        color: track.color,
+        role: track.role,
+        notes: track.notes,
+        devices: track.devices ?? [],
+        clips: track.clips ?? [],
+        maxPatch: track.maxPatch ?? null,
+      };
+
+      const existingIndex = project.tracks.findIndex((t) => t.id === sanitizedTrack.id);
+      const nextTracks =
+        existingIndex === -1
+          ? [...project.tracks, sanitizedTrack]
+          : project.tracks.map((t, i) => (i === existingIndex ? { ...t, ...sanitizedTrack } : t));
+
+      updateProject({ tracks: nextTracks });
     },
   });
 
   useCopilotAction({
     name: "removeAbletonTrack",
-    description:
-      "Remove a track from the Ableton project by id. Provide the Ableton track name when you need to delete it in Live.",
+    description: "Remove a track by ID",
     parameters: [
-      {
-        name: "trackId",
-        description: "The unique id of the track to remove.",
-        required: true,
-      },
-      {
-        name: "trackName",
-        description:
-          "Optional Ableton track name. Supply this when removing the actual Live track via abletonRemoveTrack.",
-        required: false,
-      },
+      { name: "trackId", description: "Track ID to remove", required: true },
     ],
     handler: ({ trackId }) => {
-      updateProject({
-        tracks: project.tracks.filter((track) => track.id !== trackId),
-      });
+      updateProject({ tracks: project.tracks.filter((t) => t.id !== trackId) });
     },
   });
 
   useCopilotAction({
     name: "setMaxPatchIdeas",
-    description:
-      "Replace the list of Max for Live patch ideas for this session. Provide rich descriptions so the user can build them quickly.",
+    description: "Set Max for Live patch ideas",
     parameters: [
-      {
-        name: "maxPatchIdeasJson",
-        description:
-          "JSON string array of patches, each { id, name, description, devices, modulationTargets }.",
-        required: true,
-      },
+      { name: "maxPatchIdeasJson", description: "JSON array of patch ideas", required: true },
     ],
     handler: ({ maxPatchIdeasJson }) => {
-      const parsed = safeJsonParse<MaxPatchIdea[]>(maxPatchIdeasJson);
-      if (!parsed) return;
-      updateProject({ maxPatchIdeas: parsed });
+      const patches = safeJsonParse<MaxPatchIdea[]>(maxPatchIdeasJson);
+      if (patches) updateProject({ maxPatchIdeas: patches });
     },
   });
 
   useCopilotAction({
     name: "setNextActions",
-    description: "Update the creative next steps list for the session.",
+    description: "Set next action items",
     parameters: [
-      {
-        name: "actionItemsJson",
-        description: "JSON string array of short action items.",
-        required: true,
-      },
+      { name: "actionItemsJson", description: "JSON array of action strings", required: true },
     ],
     handler: ({ actionItemsJson }) => {
-      const parsed = safeJsonParse<string[]>(actionItemsJson);
-      if (!parsed) return;
-      updateProject({ nextActions: parsed });
+      const actions = safeJsonParse<string[]>(actionItemsJson);
+      if (actions) updateProject({ nextActions: actions });
     },
   });
 
-  useCopilotAction({
-    name: "setArrangementNotes",
-    description:
-      "Update arrangement and session view notes to guide the producer through the Live set.",
-    parameters: [
-      {
-        name: "arrangementNotes",
-        description: "Detailed arrangement roadmap text.",
-        required: false,
-      },
-      {
-        name: "sessionViewNotes",
-        description: "Clip/session view organization tips.",
-        required: false,
-      },
-    ],
-    handler: ({ arrangementNotes, sessionViewNotes }) => {
-      updateProject({
-        arrangementNotes: arrangementNotes ?? project.arrangementNotes,
-        sessionViewNotes: sessionViewNotes ?? project.sessionViewNotes,
-      });
-    },
-  });
+  // Render current stage panel
+  const renderStagePanel = () => {
+    switch (workflow.currentStage) {
+      case "briefIngestion":
+        return (
+          <BriefWizard
+            brief={workflow.brief}
+            spec={workflow.spec}
+            isLocked={workflow.stagesCompleted.includes("briefIngestion")}
+            onBriefChange={(brief) => updateWorkflow({ brief })}
+            onLockIntent={() => markStageComplete("briefIngestion")}
+          />
+        );
+      case "stylePrior":
+        return (
+          <StylePriorPanel
+            stylePrior={workflow.stylePrior}
+            isLocked={workflow.stagesCompleted.includes("stylePrior")}
+            onStylePriorChange={(stylePrior) => updateWorkflow({ stylePrior })}
+            onLock={() => markStageComplete("stylePrior")}
+          />
+        );
+      case "timeBase":
+        return (
+          <TimeBasePanel
+            timeBase={workflow.timeBase}
+            grooveCandidates={workflow.grooveCandidates}
+            grooveScores={workflow.grooveScores}
+            isLocked={workflow.stagesCompleted.includes("timeBase")}
+            onSelectGroove={(groove) => {
+              const timeBase: TimeBase = {
+                finalTempo: groove.tempo,
+                finalMeter: groove.meter,
+                selectedGroove: groove,
+                alternateGrooves: (workflow.grooveCandidates || []).filter(
+                  (g) => g.id !== groove.id
+                ),
+              };
+              updateWorkflow({ timeBase });
+              updateProject({ tempo: groove.tempo, timeSignature: groove.meter });
+            }}
+            onLock={() => markStageComplete("timeBase")}
+          />
+        );
+      case "palette":
+        return (
+          <PalettePanel
+            palette={workflow.palette}
+            isLocked={workflow.stagesCompleted.includes("palette")}
+            onLock={() => markStageComplete("palette")}
+          />
+        );
+      case "motifSeed":
+        return (
+          <MotifSeedsPanel
+            motifSeedSet={workflow.motifSeedSet}
+            isLocked={workflow.stagesCompleted.includes("motifSeed")}
+            onLock={() => markStageComplete("motifSeed")}
+          />
+        );
+      case "macroStructure":
+        return (
+          <MacroStructurePanel
+            macroStructure={workflow.macroStructure}
+            isLocked={workflow.stagesCompleted.includes("macroStructure")}
+            onLock={() => markStageComplete("macroStructure")}
+          />
+        );
+      case "composeOrchestrate":
+        return (
+          <ComposePanel
+            compositions={workflow.compositions}
+            sections={workflow.macroStructure?.sections}
+            isLocked={workflow.stagesCompleted.includes("composeOrchestrate")}
+            onLock={() => markStageComplete("composeOrchestrate")}
+          />
+        );
+      case "variationOperators":
+        return (
+          <VariationsPanel
+            variationPasses={workflow.variationPasses}
+            sections={workflow.macroStructure?.sections}
+            totalBars={workflow.macroStructure?.totalBars}
+            isLocked={workflow.stagesCompleted.includes("variationOperators")}
+            onLock={() => markStageComplete("variationOperators")}
+          />
+        );
+      case "mixSpatial":
+        return (
+          <MixDesignPanel
+            mixDesign={workflow.mixDesign}
+            isLocked={workflow.stagesCompleted.includes("mixSpatial")}
+            onLock={() => markStageComplete("mixSpatial")}
+          />
+        );
+      default:
+        return null;
+    }
+  };
 
   return (
-    <div className="px-6 py-12 md:px-12 lg:px-24 text-white">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-8">
-        <header className="rounded-3xl border border-white/10 bg-white/5 p-8 shadow-xl backdrop-blur">
-          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-            <div>
-              <p className={sectionLabelStyles}>Project</p>
-              <h1 className="text-4xl font-bold text-white md:text-5xl">
-                {project.projectName}
-              </h1>
-              <p className="text-white/70 text-lg md:text-xl">{project.vibe}</p>
-            </div>
-            <div
-              className="rounded-2xl px-6 py-4 text-center text-sm font-semibold uppercase tracking-[0.3em]"
-              style={{ backgroundColor: themeColor }}
-            >
-              Ableton Live 12 · Max 9
-            </div>
-          </div>
-          <dl className="mt-6 grid grid-cols-2 gap-4 text-sm md:grid-cols-4">
-            <MetaItem label="Genre" value={project.genre} />
-            <MetaItem label="Tempo" value={`${project.tempo} BPM`} />
-            <MetaItem label="Key" value={project.key} />
-            <MetaItem label="Time Signature" value={project.timeSignature} />
-          </dl>
-        </header>
+    <div className="px-4 py-6 md:px-8 lg:px-12 text-white">
+      <div className="mx-auto max-w-6xl flex flex-col gap-6">
+        {/* Workflow Stepper */}
+        <WorkflowStepper
+          currentStage={workflow.currentStage}
+          completedStages={workflow.stagesCompleted}
+          onStageClick={setCurrentStage}
+        />
 
-        <section className="grid gap-8 lg:grid-cols-[2fr,1fr]">
-          <div className="rounded-3xl border border-white/10 bg-white/5 p-8 backdrop-blur">
-            <p className={sectionLabelStyles}>Arrangement Roadmap</p>
-            <p className="mt-3 text-base leading-relaxed text-white/80">
-              {project.arrangementNotes}
-            </p>
-            <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-6">
-              <p className={sectionLabelStyles}>Session View Notes</p>
-              <p className="mt-2 text-sm leading-relaxed text-white/70">
-                {project.sessionViewNotes}
+        {/* Main content area */}
+        <div className="grid gap-6 lg:grid-cols-[280px,1fr]">
+          {/* Left sidebar - Project overview */}
+          <div className="space-y-4">
+            {/* Project header card */}
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur">
+              <div className="text-xs uppercase tracking-widest text-white/50 mb-1">Project</div>
+              <h1 className="text-xl font-bold text-white mb-2">
+                {project.projectName || "New Production"}
+              </h1>
+              {project.vibe && (
+                <p className="text-sm text-white/60 mb-3">{project.vibe}</p>
+              )}
+
+              {/* Quick stats */}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-lg bg-white/5 p-2">
+                  <div className="text-xs text-white/50">Tempo</div>
+                  <div className="text-lg font-semibold">{project.tempo} BPM</div>
+                </div>
+                <div className="rounded-lg bg-white/5 p-2">
+                  <div className="text-xs text-white/50">Key</div>
+                  <div className="text-lg font-semibold">{project.key || "—"}</div>
+                </div>
+                <div className="rounded-lg bg-white/5 p-2">
+                  <div className="text-xs text-white/50">Genre</div>
+                  <div className="text-sm font-medium">
+                    {project.genre || workflow.brief?.genres?.[0] || "—"}
+                  </div>
+                </div>
+                <div className="rounded-lg bg-white/5 p-2">
+                  <div className="text-xs text-white/50">Time Sig</div>
+                  <div className="text-lg font-semibold">{project.timeSignature}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Tracks summary */}
+            {project.tracks.length > 0 && (
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-xs uppercase tracking-widest text-white/50">Tracks</div>
+                  <span className="text-xs text-white/40">{project.tracks.length}</span>
+                </div>
+                <div className="space-y-2">
+                  {project.tracks.slice(0, 5).map((track) => (
+                    <div
+                      key={track.id}
+                      className="flex items-center gap-2 rounded-lg bg-white/5 px-2 py-1.5"
+                    >
+                      <div
+                        className="h-2 w-2 rounded-full"
+                        style={{ backgroundColor: track.color || themeColor }}
+                      />
+                      <span className="text-xs text-white/80 truncate flex-1">
+                        {track.name}
+                      </span>
+                      <span className="text-xs text-white/40">{track.type}</span>
+                    </div>
+                  ))}
+                  {project.tracks.length > 5 && (
+                    <div className="text-xs text-white/40 text-center">
+                      +{project.tracks.length - 5} more
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Current stage info */}
+            <div
+              className="rounded-2xl border p-4"
+              style={{
+                borderColor: `${STAGE_CONFIG[workflow.currentStage].color}40`,
+                backgroundColor: `${STAGE_CONFIG[workflow.currentStage].color}10`,
+              }}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <div
+                  className="flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold text-white"
+                  style={{ backgroundColor: STAGE_CONFIG[workflow.currentStage].color }}
+                >
+                  {STAGE_CONFIG[workflow.currentStage].icon}
+                </div>
+                <span
+                  className="text-sm font-medium"
+                  style={{ color: STAGE_CONFIG[workflow.currentStage].color }}
+                >
+                  {STAGE_CONFIG[workflow.currentStage].label}
+                </span>
+              </div>
+              <p className="text-xs text-white/60">
+                {getStageDescription(workflow.currentStage)}
               </p>
             </div>
           </div>
 
-          <div className="rounded-3xl border border-white/10 bg-white/5 p-8 backdrop-blur">
-            <p className={sectionLabelStyles}>Next Actions</p>
-            <ul className="mt-4 space-y-3 text-sm text-white/80">
-              {project.nextActions.map((item, index) => (
-                <li
-                  key={index}
-                  className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/5 p-4"
-                >
-                  <span
-                    className="mt-0.5 inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold"
-                    style={{ backgroundColor: themeColor }}
-                  >
-                    {index + 1}
-                  </span>
-                  <span>{item}</span>
-                </li>
-              ))}
-              {project.nextActions.length === 0 && (
-                <li className="rounded-2xl border border-dashed border-white/20 bg-white/5 p-4 text-white/60">
-                  Ask the copilot for creative next steps to keep momentum.
-                </li>
-              )}
-            </ul>
-          </div>
-        </section>
-
-        <section className="rounded-3xl border border-white/10 bg-white/5 p-8 backdrop-blur">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className={sectionLabelStyles}>Tracks & Device Chains</p>
-              <h2 className="text-2xl font-semibold text-white md:text-3xl">
-                Build out the session view with the copilot
-              </h2>
-            </div>
-            <span className="rounded-full border border-white/20 px-4 py-1 text-xs font-medium uppercase tracking-widest text-white/60">
-              {project.tracks.length} tracks
-            </span>
-          </div>
-          <div className="mt-8 grid gap-6 lg:grid-cols-2">
-            {project.tracks.map((track) => (
-              <TrackCard key={track.id} track={track} themeColor={themeColor} />
-            ))}
-            {project.tracks.length === 0 && (
-              <div className="rounded-2xl border border-dashed border-white/20 bg-white/5 p-8 text-white/60">
-                No tracks yet. Ask the assistant to design a drum rack, synth pad, or audio
-                processing chain.
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section className="rounded-3xl border border-white/10 bg-white/5 p-8 backdrop-blur">
-          <p className={sectionLabelStyles}>Max For Live Lab</p>
-          <h2 className="mt-2 text-2xl font-semibold text-white md:text-3xl">
-            Modulation + performance ideas
-          </h2>
-          <div className="mt-6 grid gap-6 md:grid-cols-2">
-            {project.maxPatchIdeas.map((patch) => (
-              <MaxPatchCard key={patch.id} patch={patch} />
-            ))}
-            {project.maxPatchIdeas.length === 0 && (
-              <div className="rounded-2xl border border-dashed border-white/20 bg-white/5 p-8 text-white/60">
-                Ask the copilot for a Max for Live device concept to unlock new modulation.
-              </div>
-            )}
-          </div>
-        </section>
+          {/* Main stage panel */}
+          <div className="min-w-0">{renderStagePanel()}</div>
+        </div>
       </div>
     </div>
   );
 }
 
-function MetaItem({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-      <p className={sectionLabelStyles}>{label}</p>
-      <p className="mt-2 text-lg font-semibold text-white">{value}</p>
-    </div>
-  );
-}
-
-function TrackCard({ track, themeColor }: { track: AbletonTrack; themeColor: string }) {
-  return (
-    <article className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-black/40 p-6">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <span
-              className="h-3 w-3 rounded-full"
-              style={{ backgroundColor: track.color ?? themeColor }}
-            />
-            <h3 className="text-xl font-semibold text-white">{track.name}</h3>
-          </div>
-          <p className="text-sm uppercase tracking-widest text-white/50">{track.type}</p>
-          {track.role && <p className="mt-2 text-sm text-white/70">{track.role}</p>}
-        </div>
-        {track.notes && (
-          <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/70">
-            {track.notes}
-          </span>
-        )}
-      </header>
-
-      <div>
-        <p className={sectionLabelStyles}>Devices</p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {track.devices.map((device, index) => (
-            <span
-              key={`${device.name}-${index}`}
-              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs text-white/80"
-            >
-              <span className="font-semibold">{device.name}</span>
-              <span className="text-white/60">· {device.category}</span>
-              {device.notes && <span className="text-white/60">({device.notes})</span>}
-            </span>
-          ))}
-          {track.devices.length === 0 && (
-            <span className="inline-flex items-center rounded-full border border-dashed border-white/20 px-3 py-1 text-xs text-white/50">
-              Ask the copilot for device ideas
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div>
-        <p className={sectionLabelStyles}>Clips</p>
-        <div className="mt-3 space-y-3">
-          {track.clips.map((clip, index) => (
-            <div
-              key={`${clip.name}-${index}`}
-              className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/80"
-            >
-              <div className="flex flex-wrap items-center gap-3">
-                <span
-                  className="rounded-full px-3 py-1 text-xs font-semibold tracking-widest text-white/60"
-                  style={{ backgroundColor: themeColor }}
-                >
-                  {clip.length}
-                </span>
-                <span className="font-semibold text-white">{clip.name}</span>
-                <span className="text-white/60 uppercase tracking-widest">
-                  {clip.clipType}
-                </span>
-              </div>
-              {clip.description && (
-                <p className="mt-2 text-white/70">{clip.description}</p>
-              )}
-            </div>
-          ))}
-          {track.clips.length === 0 && (
-            <div className="rounded-2xl border border-dashed border-white/20 bg-white/5 p-4 text-sm text-white/60">
-              No clips yet. Ask the assistant for MIDI clip concepts or recorded audio ideas.
-            </div>
-          )}
-        </div>
-      </div>
-
-      {track.maxPatch && (
-        <div className="rounded-2xl border border-white/10 bg-purple-600/20 p-5 text-sm text-white/80">
-          <p className={sectionLabelStyles}>Max for Live Support</p>
-          <h4 className="mt-2 font-semibold text-white">{track.maxPatch.name}</h4>
-          <p className="mt-1 text-white/70">{track.maxPatch.description}</p>
-          <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/70">
-            {track.maxPatch.devices?.map((device, idx) => (
-              <span
-                key={`${device}-${idx}`}
-                className="rounded-full border border-white/10 bg-white/10 px-3 py-1"
-              >
-                {device}
-              </span>
-            ))}
-            {track.maxPatch.modulationTargets?.map((target, idx) => (
-              <span
-                key={`${target}-${idx}`}
-                className="rounded-full border border-purple-300/40 bg-purple-500/20 px-3 py-1 text-purple-100"
-              >
-                ↦ {target}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-    </article>
-  );
-}
-
-function MaxPatchCard({ patch }: { patch: MaxPatchIdea }) {
-  return (
-    <article className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-black/40 p-6">
-      <header>
-        <p className={sectionLabelStyles}>Patch Idea</p>
-        <h3 className="text-xl font-semibold text-white">{patch.name}</h3>
-      </header>
-      <p className="text-sm leading-relaxed text-white/70">{patch.description}</p>
-      <div className="flex flex-wrap gap-2 text-xs text-white/70">
-        {patch.devices?.map((device, index) => (
-          <span
-            key={`${patch.id}-device-${index}`}
-            className="rounded-full border border-white/10 bg-white/10 px-3 py-1"
-          >
-            {device}
-          </span>
-        ))}
-        {patch.modulationTargets?.map((target, index) => (
-          <span
-            key={`${patch.id}-target-${index}`}
-            className="rounded-full border border-purple-300/40 bg-purple-500/20 px-3 py-1 text-purple-100"
-          >
-            ↦ {target}
-          </span>
-        ))}
-      </div>
-    </article>
-  );
+function getStageDescription(stage: WorkflowStage): string {
+  const descriptions: Record<WorkflowStage, string> = {
+    briefIngestion:
+      "Define your creative vision - genres, moods, references, and constraints.",
+    stylePrior:
+      "Establish the sonic character - BPM, swing, sound design traits.",
+    timeBase:
+      "Create the groove foundation - tempo, meter, and drum patterns.",
+    palette:
+      "Curate your sounds across the frequency spectrum.",
+    motifSeed:
+      "Generate and select memorable musical ideas and hooks.",
+    macroStructure:
+      "Design the arrangement architecture with sections and energy flow.",
+    composeOrchestrate:
+      "Compose voices and harmonies for each section.",
+    variationOperators:
+      "Add variations and ear candy to maintain interest.",
+    mixSpatial:
+      "Design levels, spatial positioning, and the master chain.",
+  };
+  return descriptions[stage];
 }
