@@ -554,24 +554,56 @@ function AbletonWorkflowBuilder({ themeColor }: { themeColor: string }) {
                   <span className="text-xs text-white/40">{project.tracks.length}</span>
                 </div>
                 <div className="space-y-2">
-                  {project.tracks.slice(0, 5).map((track) => (
-                    <div
-                      key={track.id}
-                      className="flex items-center gap-2 rounded-lg bg-white/5 px-2 py-1.5"
-                    >
+                  {project.tracks.slice(0, 8).map((track) => {
+                    const instruments = track.devices.filter(d => d.category === "Instrument");
+                    const effects = track.devices.filter(d => d.category === "Audio Effect" || d.category === "MIDI Effect");
+
+                    return (
                       <div
-                        className="h-2 w-2 rounded-full"
-                        style={{ backgroundColor: track.color || themeColor }}
-                      />
-                      <span className="text-xs text-white/80 truncate flex-1">
-                        {track.name}
-                      </span>
-                      <span className="text-xs text-white/40">{track.type}</span>
-                    </div>
-                  ))}
-                  {project.tracks.length > 5 && (
+                        key={track.id}
+                        className="rounded-lg bg-white/5 px-2 py-1.5"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="h-2 w-2 rounded-full flex-shrink-0"
+                            style={{ backgroundColor: track.color || themeColor }}
+                          />
+                          <span className="text-xs text-white/80 truncate flex-1">
+                            {track.name}
+                          </span>
+                          <span className="text-xs text-white/40">{track.type}</span>
+                        </div>
+                        {(instruments.length > 0 || effects.length > 0) && (
+                          <div className="mt-1 ml-4 flex flex-wrap gap-1">
+                            {instruments.map((device, i) => (
+                              <span
+                                key={`inst-${i}`}
+                                className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300"
+                              >
+                                {device.name}
+                              </span>
+                            ))}
+                            {effects.slice(0, 3).map((device, i) => (
+                              <span
+                                key={`fx-${i}`}
+                                className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300"
+                              >
+                                {device.name}
+                              </span>
+                            ))}
+                            {effects.length > 3 && (
+                              <span className="text-[10px] px-1.5 py-0.5 text-white/40">
+                                +{effects.length - 3} fx
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {project.tracks.length > 8 && (
                     <div className="text-xs text-white/40 text-center">
-                      +{project.tracks.length - 5} more
+                      +{project.tracks.length - 8} more
                     </div>
                   )}
                 </div>

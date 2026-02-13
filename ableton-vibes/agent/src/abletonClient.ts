@@ -44,6 +44,19 @@ export type TrackBlueprint = {
   mute?: boolean;
   arm?: boolean;
   clips?: ClipBlueprint[];
+  /**
+   * Device/instrument to load on the track. Can be:
+   * - A built-in device name like "Drum Rack", "Wavetable", "Operator", "Simpler", "Analog"
+   * - A category path like "Instruments/Drum Rack" or "Audio Effects/Reverb"
+   */
+  device?: string;
+};
+
+export type DeviceInfo = {
+  name: string;
+  type: "instrument" | "audioEffect" | "midiEffect" | "unknown";
+  className: string;
+  isActive: boolean;
 };
 
 export type AbletonSessionSnapshot = {
@@ -58,6 +71,7 @@ export type AbletonSessionSnapshot = {
     isMuted: boolean;
     isArmed: boolean;
     clipNames: string[];
+    devices: DeviceInfo[];
   }>;
 };
 
@@ -167,6 +181,131 @@ const determineTrackType = async (
   if (hasMidiOut && !hasAudioIn) return "MIDI";
   if (hasAudioOut) return "Audio";
   return "Unknown";
+};
+
+// Common device name mappings for easier lookups
+const DEVICE_ALIASES: Record<string, string[]> = {
+  "drum rack": ["Drum Rack", "Drums"],
+  "wavetable": ["Wavetable"],
+  "operator": ["Operator"],
+  "analog": ["Analog"],
+  "simpler": ["Simpler"],
+  "sampler": ["Sampler"],
+  "impulse": ["Impulse"],
+  "tension": ["Tension"],
+  "collision": ["Collision"],
+  "electric": ["Electric"],
+  "bass": ["Bass"],
+  "drift": ["Drift"],
+  "reverb": ["Reverb"],
+  "delay": ["Delay", "Echo"],
+  "compressor": ["Compressor", "Glue Compressor"],
+  "eq": ["EQ Eight", "EQ Three", "Channel EQ"],
+  "saturator": ["Saturator"],
+  "chorus": ["Chorus-Ensemble", "Chorus"],
+  "phaser": ["Phaser-Flanger", "Phaser"],
+  "filter": ["Auto Filter"],
+  "gate": ["Gate"],
+  "limiter": ["Limiter"],
+};
+
+import type { BrowserItem } from "ableton-js/ns/browser-item";
+
+/**
+ * Search browser items to find a device by name
+ * Returns the full BrowserItem so it can be passed to loadItem
+ */
+const findBrowserItem = async (
+  instance: Ableton,
+  searchName: string,
+  category: "instruments" | "audio_effects" | "midi_effects" | "drums" = "instruments",
+): Promise<BrowserItem | null> => {
+  const lowerSearch = searchName.toLowerCase();
+  const aliases = DEVICE_ALIASES[lowerSearch] || [searchName];
+
+  try {
+    const browser = await instance.application.get("browser");
+    const items = await browser.get(category);
+
+    // Search top-level items first
+    for (const item of items) {
+      const itemName = item.raw.name?.toLowerCase() || "";
+
+      for (const alias of aliases) {
+        if (itemName === alias.toLowerCase() || itemName.includes(alias.toLowerCase())) {
+          if (item.raw.is_loadable) {
+            return item;
+          }
+        }
+      }
+    }
+
+    // Search one level deep in folders
+    for (const item of items) {
+      if (item.raw.is_folder) {
+        try {
+          const children = await item.get("children");
+          for (const child of children) {
+            const childName = child.raw.name?.toLowerCase() || "";
+
+            for (const alias of aliases) {
+              if (childName === alias.toLowerCase() || childName.includes(alias.toLowerCase())) {
+                if (child.raw.is_loadable) {
+                  return child;
+                }
+              }
+            }
+          }
+        } catch {
+          // Some folders may not be accessible
+        }
+      }
+    }
+  } catch (error) {
+    console.warn(`Failed to search browser for "${searchName}":`, error);
+  }
+
+  return null;
+};
+
+/**
+ * Load a device onto a track by selecting the track and loading via browser
+ */
+const loadDeviceOnTrack = async (
+  instance: Ableton,
+  track: Track,
+  deviceName: string,
+): Promise<boolean> => {
+  // First, select the track so the device loads onto it
+  try {
+    await instance.song.view.set("selected_track", track.raw.id);
+  } catch (error) {
+    console.warn("Failed to select track:", error);
+    return false;
+  }
+
+  // Try instruments first, then audio effects, then drums
+  let item = await findBrowserItem(instance, deviceName, "instruments");
+  if (!item) {
+    item = await findBrowserItem(instance, deviceName, "audio_effects");
+  }
+  if (!item) {
+    item = await findBrowserItem(instance, deviceName, "drums");
+  }
+
+  if (!item) {
+    console.warn(`Device "${deviceName}" not found in browser`);
+    return false;
+  }
+
+  try {
+    const browser = await instance.application.get("browser");
+    await browser.loadItem(item);
+    return true;
+  } catch (error) {
+    console.warn(`Failed to load device "${deviceName}":`, error);
+    return false;
+  }
 };
 
 const locateTrackByName = async (name: string): Promise<{
@@ -400,8 +539,10 @@ export const applyTrackBlueprint = async (blueprint: TrackBlueprint, beatsPerBar
   const lookup = await locateTrackByName(blueprint.name);
   const { track: existingTrack, kind } = lookup;
   let workingTrack: Track;
+  let isNewTrack = false;
 
   if (!existingTrack) {
+    isNewTrack = true;
     switch (blueprint.type) {
       case "Audio": {
         workingTrack = await instance.song.createAudioTrack();
@@ -445,6 +586,14 @@ export const applyTrackBlueprint = async (blueprint: TrackBlueprint, beatsPerBar
   const isReturnTrack = blueprint.type === "Return" || kind === "return";
   const trackType =
     isReturnTrack ? "Return" : blueprint.type ?? (await determineTrackType(workingTrack));
+
+  // Load device if specified (only for new tracks or if explicitly requested)
+  if (blueprint.device && (isNewTrack || !existingTrack)) {
+    const deviceLoaded = await loadDeviceOnTrack(instance, workingTrack, blueprint.device);
+    if (!deviceLoaded) {
+      console.warn(`Could not load device "${blueprint.device}" on track "${blueprint.name}"`);
+    }
+  }
 
   if (
     trackType !== "Return" &&
@@ -493,13 +642,14 @@ export const captureSessionSnapshot = async (): Promise<AbletonSessionSnapshot> 
 
   const trackSummaries = await Promise.all(
     tracks.map(async (track) => {
-      const [name, colorIndex, colorNumber, mute, arm, clipSlots, type] = await Promise.all([
+      const [name, colorIndex, colorNumber, mute, arm, clipSlots, trackDevices, type] = await Promise.all([
         track.get("name"),
         track.get("color_index"),
         track.get("color"),
         track.get("mute"),
         track.get("arm"),
         track.get("clip_slots"),
+        track.get("devices"),
         determineTrackType(track),
       ]);
 
@@ -513,6 +663,64 @@ export const captureSessionSnapshot = async (): Promise<AbletonSessionSnapshot> 
 
         clipNames.push(await clip.get("name"));
       }
+
+      // Fetch device information
+      const devices: DeviceInfo[] = await Promise.all(
+        trackDevices.map(async (device) => {
+          try {
+            const [deviceName, className, isActive, canHaveDrumPads, canHaveChains] = await Promise.all([
+              device.get("name"),
+              device.get("class_name"),
+              device.get("is_active"),
+              device.get("can_have_drum_pads").catch(() => false),
+              device.get("can_have_chains").catch(() => false),
+            ]);
+
+            // Determine device type based on class and capabilities
+            let deviceType: DeviceInfo["type"] = "unknown";
+            const classLower = (className || "").toLowerCase();
+
+            // Known Ableton native device patterns
+            const knownInstruments = ["instrument", "simpler", "sampler", "operator", "wavetable",
+                                      "analog", "drift", "drumrack", "collision", "tension", "electric"];
+            const knownMidiEffects = ["midieffect", "arpeggiator", "chord", "note", "pitch", "scale", "velocity"];
+            const knownAudioEffects = ["audioeffect", "reverb", "delay", "compressor", "eq", "filter",
+                                       "saturator", "limiter", "gate", "chorus", "phaser", "flanger", "utility", "glue"];
+
+            const isKnownInstrument = knownInstruments.some(p => classLower.includes(p));
+            const isKnownMidiEffect = knownMidiEffects.some(p => classLower.includes(p));
+            const isKnownAudioEffect = knownAudioEffects.some(p => classLower.includes(p));
+            const isKnownDevice = isKnownInstrument || isKnownMidiEffect || isKnownAudioEffect;
+
+            // Classify device
+            if (canHaveDrumPads || isKnownInstrument) {
+              deviceType = "instrument";
+            } else if (isKnownMidiEffect) {
+              deviceType = "midiEffect";
+            } else if (isKnownAudioEffect) {
+              deviceType = "audioEffect";
+            } else if (!isKnownDevice) {
+              // Unknown device class - likely a third-party VST/AU plugin
+              // Use canHaveChains as heuristic: instruments typically can have chains
+              deviceType = canHaveChains ? "instrument" : "audioEffect";
+            }
+
+            return {
+              name: deviceName || "Unknown Device",
+              type: deviceType,
+              className: className || "Unknown",
+              isActive: isActive ?? true,
+            };
+          } catch (error) {
+            return {
+              name: "Unknown Device",
+              type: "unknown" as const,
+              className: "Unknown",
+              isActive: true,
+            };
+          }
+        }),
+      );
 
       let colorHex: string | null = null;
       try {
@@ -531,6 +739,7 @@ export const captureSessionSnapshot = async (): Promise<AbletonSessionSnapshot> 
         isMuted: mute,
         isArmed: arm,
         clipNames,
+        devices,
       };
     }),
   );

@@ -7,7 +7,15 @@ import { z } from "zod";
 import { RunnableConfig } from "@langchain/core/runnables";
 import { tool } from "@langchain/core/tools";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
-import { AIMessage, SystemMessage } from "@langchain/core/messages";
+import {
+  AIMessage,
+  BaseMessage,
+  ChatMessage,
+  FunctionMessage,
+  HumanMessage,
+  SystemMessage,
+  ToolMessage,
+} from "@langchain/core/messages";
 import { MemorySaver, START, StateGraph } from "@langchain/langgraph";
 import { ChatOpenAI } from "@langchain/openai";
 import { convertActionsToDynamicStructuredTools, CopilotKitStateAnnotation } from "@copilotkit/sdk-js/langgraph";
@@ -20,6 +28,8 @@ import {
   ProjectSettings,
   TrackBlueprint,
   removeTrackByName,
+  AbletonSessionSnapshot,
+  DeviceInfo,
 } from "./abletonClient";
 import { searchSamples } from "./sampleFinder";
 import { insertSampleAsClip } from "./abletonClient";
@@ -132,6 +142,9 @@ const abletonApplyProjectSettings = tool(
 
     await applyProjectSettings(settings);
 
+    // Capture snapshot after mutation for UI sync
+    const snapshot = await captureSessionSnapshot();
+
     const summary: string[] = [];
     if (typeof settings.tempo === "number") summary.push(`tempo ${settings.tempo} BPM`);
     if (settings.timeSignature) summary.push(`time signature ${settings.timeSignature}`);
@@ -144,9 +157,16 @@ const abletonApplyProjectSettings = tool(
     if (settings.play) summary.push("playback started");
     if (settings.stop) summary.push("transport stopped");
 
-    return summary.length
+    const message = summary.length
       ? `Applied Ableton project settings: ${summary.join(", ")}.`
       : "Applied Ableton project settings.";
+
+    return JSON.stringify({
+      message,
+      snapshot,
+      syncRequired: true,
+      syncHint: "Call setProjectOverview with tempo, timeSignature from snapshot to sync UI.",
+    });
   },
   {
     name: "abletonApplyProjectSettings",
@@ -178,20 +198,47 @@ const abletonUpsertTracks = tool(
     const results: string[] = [];
     for (const blueprint of blueprints) {
       const trackType = await applyTrackBlueprint(blueprint, computedBeatsPerBar);
-      results.push(`${blueprint.name} (${trackType})`);
+      const deviceInfo = blueprint.device ? ` with ${blueprint.device}` : "";
+      const clipInfo = blueprint.clips?.length ? `, ${blueprint.clips.length} clip(s)` : "";
+      results.push(`${blueprint.name} (${trackType}${deviceInfo}${clipInfo})`);
     }
 
-    return `Synced Ableton tracks: ${results.join(", ")}.`;
+    // Capture snapshot after mutation for UI sync
+    const snapshot = await captureSessionSnapshot();
+
+    const message = `Synced Ableton tracks: ${results.join(", ")}.`;
+
+    return JSON.stringify({
+      message,
+      snapshot,
+      syncRequired: true,
+      syncHint: "Call upsertAbletonTrack for each track and setProjectOverview with tempo/timeSignature to sync UI.",
+    });
   },
   {
     name: "abletonUpsertTracks",
     description:
-      "Create or update Ableton tracks (name, type, arm/mute, optional clip skeletons). Accepts one or multiple track blueprints.",
+      "Create or update Ableton tracks with instruments and MIDI clips. IMPORTANT: Always include 'device' to specify the instrument and 'clips' with 'notes' arrays to create playable content.",
     schema: z.object({
       blueprintJson: z
         .string()
         .describe(
-          "JSON string describing either a single TrackBlueprint or an array of them. Each blueprint supports { name, type, colorIndex, arm, mute, clips: [{ name, length, notes: [{ pitch, time, duration, velocity, muted }] }] }.",
+          `JSON string for TrackBlueprint(s). REQUIRED fields for playable tracks:
+{
+  "name": "Track Name",
+  "type": "MIDI",
+  "device": "Drum Rack" | "Wavetable" | "Operator" | "Analog" | "Simpler" | etc.,
+  "clips": [{
+    "name": "Clip Name",
+    "length": "4 bars",
+    "notes": [
+      { "pitch": 36, "time": 0, "duration": 0.5, "velocity": 100 },
+      { "pitch": 38, "time": 1, "duration": 0.5, "velocity": 90 }
+    ]
+  }]
+}
+For drums: pitch 36=kick, 38=snare, 42=closed hat, 46=open hat, 39=clap.
+Time and duration are in beats (4 beats = 1 bar in 4/4).`,
         ),
       timeSignature: z
         .string()
@@ -210,7 +257,16 @@ const abletonUpsertTracks = tool(
 const abletonRemoveTrack = tool(
   async ({ trackName }) => {
     await removeTrackByName(trackName);
-    return `Removed Ableton track "${trackName}".`;
+
+    // Capture snapshot after mutation for UI sync
+    const snapshot = await captureSessionSnapshot();
+
+    return JSON.stringify({
+      message: `Removed Ableton track "${trackName}".`,
+      snapshot,
+      syncRequired: true,
+      syncHint: "Call removeAbletonTrack with trackId to sync UI.",
+    });
   },
   {
     name: "abletonRemoveTrack",
@@ -224,13 +280,306 @@ const abletonRemoveTrack = tool(
 const abletonCaptureSnapshot = tool(
   async () => {
     const snapshot = await captureSessionSnapshot();
-    return JSON.stringify(snapshot);
+    return JSON.stringify({
+      snapshot,
+      syncRequired: true,
+      syncHint: "Use this snapshot to sync UI state.",
+    });
   },
   {
     name: "abletonCaptureSessionSnapshot",
     description:
-      "Fetch the current Ableton Live session snapshot (tempo, time signature, playback state, and tracks with clip names).",
+      "Fetch the current Ableton Live session snapshot (tempo, time signature, playback state, and tracks with clip names). Also triggers UI sync.",
     schema: z.object({}),
+  },
+);
+
+// Quick drum pattern generator for common beat styles
+const abletonQuickDrums = tool(
+  async ({ style, bars, tempo, trackName }) => {
+    const safeBars = bars ?? 4;
+    const beatsPerBar = 4;
+    const totalBeats = safeBars * beatsPerBar;
+
+    type DrumNote = { pitch: number; time: number; duration: number; velocity: number };
+    const notes: DrumNote[] = [];
+
+    // MIDI pitches for drums
+    const KICK = 36;
+    const SNARE = 38;
+    const CLAP = 39;
+    const CLOSED_HAT = 42;
+    const OPEN_HAT = 46;
+    const RIMSHOT = 37;
+
+    const addNote = (pitch: number, time: number, velocity = 100) => {
+      if (time < totalBeats) {
+        notes.push({ pitch, time, duration: 0.25, velocity });
+      }
+    };
+
+    const stylePatterns: Record<string, () => void> = {
+      house: () => {
+        // Four-on-the-floor kick, snare on 2 and 4, offbeat hats
+        for (let bar = 0; bar < safeBars; bar++) {
+          const offset = bar * 4;
+          // Kicks on every beat
+          addNote(KICK, offset, 100);
+          addNote(KICK, offset + 1, 100);
+          addNote(KICK, offset + 2, 100);
+          addNote(KICK, offset + 3, 100);
+          // Claps on 2 and 4
+          addNote(CLAP, offset + 1, 90);
+          addNote(CLAP, offset + 3, 90);
+          // Hats on offbeats (8ths)
+          for (let i = 0; i < 8; i++) {
+            const hatTime = offset + i * 0.5;
+            addNote(CLOSED_HAT, hatTime, i % 2 === 0 ? 70 : 55);
+          }
+          // Open hat before snare hits
+          addNote(OPEN_HAT, offset + 0.75, 65);
+          addNote(OPEN_HAT, offset + 2.75, 65);
+        }
+      },
+      techno: () => {
+        // Driving kick, minimal snare/clap, 16th hats
+        for (let bar = 0; bar < safeBars; bar++) {
+          const offset = bar * 4;
+          // Kicks
+          addNote(KICK, offset, 100);
+          addNote(KICK, offset + 1, 95);
+          addNote(KICK, offset + 2, 100);
+          addNote(KICK, offset + 3, 95);
+          // Clap on 2 and 4
+          addNote(CLAP, offset + 1, 85);
+          addNote(CLAP, offset + 3, 85);
+          // 16th note hats with velocity variation
+          for (let i = 0; i < 16; i++) {
+            const hatTime = offset + i * 0.25;
+            const vel = i % 4 === 0 ? 75 : i % 2 === 0 ? 60 : 45;
+            addNote(CLOSED_HAT, hatTime, vel);
+          }
+        }
+      },
+      hiphop: () => {
+        // Boom bap style: kick on 1 and 3, snare on 2 and 4
+        for (let bar = 0; bar < safeBars; bar++) {
+          const offset = bar * 4;
+          // Kicks
+          addNote(KICK, offset, 100);
+          addNote(KICK, offset + 2.5, 90);
+          // Snares
+          addNote(SNARE, offset + 1, 95);
+          addNote(SNARE, offset + 3, 95);
+          // Swung hats
+          for (let i = 0; i < 4; i++) {
+            addNote(CLOSED_HAT, offset + i, 70);
+            addNote(CLOSED_HAT, offset + i + 0.33, 50);
+            addNote(CLOSED_HAT, offset + i + 0.66, 55);
+          }
+        }
+      },
+      dnb: () => {
+        // Fast breakbeat pattern
+        for (let bar = 0; bar < safeBars; bar++) {
+          const offset = bar * 4;
+          // Amen-style kicks
+          addNote(KICK, offset, 100);
+          addNote(KICK, offset + 1.5, 95);
+          addNote(KICK, offset + 2.75, 90);
+          // Snares
+          addNote(SNARE, offset + 1, 100);
+          addNote(SNARE, offset + 3, 100);
+          addNote(SNARE, offset + 3.5, 75);
+          // Rapid hats
+          for (let i = 0; i < 16; i++) {
+            addNote(CLOSED_HAT, offset + i * 0.25, 65 + Math.random() * 20);
+          }
+        }
+      },
+      trap: () => {
+        // 808 kick pattern, triplet hats
+        for (let bar = 0; bar < safeBars; bar++) {
+          const offset = bar * 4;
+          // Sparse kicks
+          addNote(KICK, offset, 100);
+          addNote(KICK, offset + 2.5, 95);
+          // Snare/clap on 2 and 4
+          addNote(SNARE, offset + 1, 100);
+          addNote(CLAP, offset + 1, 90);
+          addNote(SNARE, offset + 3, 100);
+          addNote(CLAP, offset + 3, 90);
+          // Rolling hi-hats (triplets on last beat)
+          for (let i = 0; i < 8; i++) {
+            addNote(CLOSED_HAT, offset + i * 0.5, 70);
+          }
+          // Hat rolls
+          for (let i = 0; i < 6; i++) {
+            addNote(CLOSED_HAT, offset + 3.5 + i * 0.083, 80);
+          }
+        }
+      },
+    };
+
+    const patternFn = stylePatterns[style.toLowerCase()];
+    if (!patternFn) {
+      return `Unknown style "${style}". Available styles: ${Object.keys(stylePatterns).join(", ")}`;
+    }
+
+    patternFn();
+
+    // Create the track with the pattern
+    const blueprint: TrackBlueprint = {
+      name: trackName || `${style.charAt(0).toUpperCase() + style.slice(1)} Drums`,
+      type: "MIDI",
+      device: "Drum Rack",
+      clips: [
+        {
+          name: `${style} beat`,
+          length: `${safeBars} bars`,
+          notes,
+        },
+      ],
+    };
+
+    // Apply tempo if specified
+    if (tempo) {
+      await applyProjectSettings({ tempo });
+    }
+
+    const trackType = await applyTrackBlueprint(blueprint, beatsPerBar);
+
+    // Capture snapshot after mutation for UI sync
+    const snapshot = await captureSessionSnapshot();
+
+    const message = `Created ${style} drum pattern on "${blueprint.name}" (${trackType}): ${notes.length} notes over ${safeBars} bars${tempo ? ` at ${tempo} BPM` : ""}.`;
+
+    return JSON.stringify({
+      message,
+      snapshot,
+      syncRequired: true,
+      syncHint: "Call upsertAbletonTrack and setProjectOverview to sync UI.",
+    });
+  },
+  {
+    name: "abletonQuickDrums",
+    description:
+      "Quickly create a drum track with a pre-made pattern in a specific style. Perfect for getting started with a beat.",
+    schema: z.object({
+      style: z
+        .enum(["house", "techno", "hiphop", "dnb", "trap"])
+        .describe("The drum style to create"),
+      bars: z.number().min(1).max(16).optional().describe("Length in bars (default 4)"),
+      tempo: z.number().min(60).max(200).optional().describe("Set the project tempo"),
+      trackName: z.string().optional().describe("Custom track name (defaults to style name)"),
+    }),
+  },
+);
+
+// Bridge tool: Convert workflow compositions to Ableton tracks
+const workflowCompositionsToAbleton = tool(
+  async ({ compositionsJson, timeSignature, defaultDevice }) => {
+    type Voice = {
+      role: string;
+      trackName: string;
+      clipName: string;
+      notes: Array<{ pitch: number; time: number; duration: number; velocity: number }>;
+      paletteEntryId?: string;
+    };
+
+    type Composition = {
+      sectionId: string;
+      voices: Voice[];
+      harmonyProgression?: Array<{ startBeat: number; chord: string; duration: number }>;
+      densityLevel?: number;
+    };
+
+    const compositions = parseJsonPayload<Composition[]>(compositionsJson, "compositions JSON");
+    const beatsPerBar = getBeatsPerBar(timeSignature);
+
+    // Map roles to appropriate devices
+    const roleToDevice: Record<string, string> = {
+      bass: "Analog",
+      harmony: "Wavetable",
+      topline: "Wavetable",
+      lead: "Operator",
+      counterline: "Wavetable",
+      rhythm: "Drum Rack",
+      pad: "Wavetable",
+      texture: "Wavetable",
+      fx: "Wavetable",
+    };
+
+    // Group voices by track name across all compositions
+    const trackVoices = new Map<string, { notes: Array<{ pitch: number; time: number; duration: number; velocity: number }>; role: string; clipName: string }[]>();
+
+    for (const comp of compositions) {
+      for (const voice of comp.voices) {
+        if (!voice.notes?.length) continue;
+
+        const existing = trackVoices.get(voice.trackName) || [];
+        existing.push({
+          notes: voice.notes,
+          role: voice.role,
+          clipName: voice.clipName,
+        });
+        trackVoices.set(voice.trackName, existing);
+      }
+    }
+
+    const results: string[] = [];
+
+    for (const [trackName, voiceData] of trackVoices) {
+      // Use the role from the first voice to determine device
+      const role = voiceData[0]?.role || "pad";
+      const device = defaultDevice || roleToDevice[role] || "Wavetable";
+
+      // Convert voices to clips
+      const clips = voiceData.map((v) => ({
+        name: v.clipName,
+        length: `${Math.ceil(Math.max(...v.notes.map((n) => n.time + n.duration)) / beatsPerBar)} bars`,
+        notes: v.notes.map((n) => ({
+          pitch: n.pitch,
+          time: n.time,
+          duration: n.duration,
+          velocity: n.velocity,
+        })),
+      }));
+
+      const blueprint: TrackBlueprint = {
+        name: trackName,
+        type: "MIDI",
+        device,
+        clips,
+      };
+
+      const trackType = await applyTrackBlueprint(blueprint, beatsPerBar);
+      results.push(`${trackName} (${trackType} with ${device}, ${clips.length} clips)`);
+    }
+
+    return results.length
+      ? `Created Ableton tracks from compositions: ${results.join(", ")}.`
+      : "No voices with notes found in compositions.";
+  },
+  {
+    name: "workflowCompositionsToAbleton",
+    description:
+      "Convert workflow composition output (from workflowComposeSection or workflowComposeAllSections) directly into Ableton tracks with clips. Automatically assigns appropriate instruments based on voice roles.",
+    schema: z.object({
+      compositionsJson: z
+        .string()
+        .describe(
+          "JSON string of the compositions array from workflow tools. Each composition has sectionId and voices array with role, trackName, clipName, and notes.",
+        ),
+      timeSignature: z
+        .string()
+        .optional()
+        .describe("Time signature (e.g., '4/4') for calculating clip lengths."),
+      defaultDevice: z
+        .string()
+        .optional()
+        .describe("Override the automatic device selection with a specific instrument name."),
+    }),
   },
 );
 
@@ -242,6 +591,8 @@ const tools = [
   abletonUpsertTracks,
   abletonRemoveTrack,
   abletonCaptureSnapshot,
+  abletonQuickDrums,
+  workflowCompositionsToAbleton,
   // Music production workflow tools (stages 1-9)
   ...allWorkflowTools,
   // sample tools
@@ -283,6 +634,99 @@ const tools = [
   ),
 ];
 
+const ensureTypedContent = (
+  content: BaseMessage["content"],
+): { content: BaseMessage["content"]; changed: boolean } => {
+  if (!Array.isArray(content)) {
+    return { content, changed: false };
+  }
+
+  let changed = false;
+
+  const sanitized = content.map((part) => {
+    if (typeof part === "string") {
+      changed = true;
+      return { type: "text", text: part };
+    }
+
+    if (part == null || typeof part !== "object") {
+      changed = true;
+      return { type: "text", text: String(part ?? "") };
+    }
+
+    const existingType = "type" in part && typeof (part as { type?: unknown }).type === "string"
+      ? (part as { type: string }).type
+      : undefined;
+
+    if (existingType && existingType.length > 0) {
+      return part;
+    }
+
+    if ("text" in part && typeof (part as { text?: unknown }).text === "string") {
+      changed = true;
+      return { ...part, type: "text" };
+    }
+
+    changed = true;
+    return { ...part, type: "text", text: JSON.stringify(part) };
+  });
+
+  return { content: sanitized, changed };
+};
+
+const normalizeMessageContent = (message: BaseMessage): BaseMessage => {
+  const { content, changed } = ensureTypedContent(message.content);
+  if (!changed) {
+    return message;
+  }
+
+  const baseFields = {
+    content,
+    additional_kwargs: { ...message.additional_kwargs },
+    response_metadata: { ...message.response_metadata },
+    id: message.id,
+    name: message.name,
+  };
+
+  switch (message._getType()) {
+    case "ai": {
+      const aiMessage = message as AIMessage;
+      return new AIMessage({
+        ...baseFields,
+        tool_calls: aiMessage.tool_calls ?? [],
+        invalid_tool_calls: aiMessage.invalid_tool_calls ?? [],
+        usage_metadata: aiMessage.usage_metadata,
+      });
+    }
+    case "human":
+      return new HumanMessage(baseFields);
+    case "system":
+      return new SystemMessage(baseFields);
+    case "tool": {
+      const toolMessage = message as ToolMessage;
+      return new ToolMessage({
+        ...baseFields,
+        tool_call_id: toolMessage.tool_call_id ?? "tool_call",
+        artifact: toolMessage.artifact,
+        status: toolMessage.status,
+        metadata: toolMessage.metadata,
+      });
+    }
+    case "function": {
+      const functionMessage = message as FunctionMessage;
+      const functionName = functionMessage.name ?? "function";
+      return new FunctionMessage({ ...baseFields, name: functionName });
+    }
+    case "generic": {
+      const chatMessage = message as ChatMessage;
+      return new ChatMessage({ ...baseFields, role: chatMessage.role ?? "assistant" });
+    }
+    default: {
+      return new ChatMessage({ ...baseFields, role: message._getType() });
+    }
+  }
+};
+
 // 5. Define the chat node, which will handle the chat logic
 async function chat_node(state: AgentState, config: RunnableConfig) {
   // 5.1 Define the model, lower temperature for deterministic responses
@@ -308,8 +752,42 @@ async function chat_node(state: AgentState, config: RunnableConfig) {
       "Act like a collaborative coproducer: design tracks, device chains, clip concepts, and Max for Live tools.",
       "Coordinate with the frontend actions to keep the workspace up to date.",
       "Prefer calling actions such as setProjectOverview, upsertAbletonTrack, removeAbletonTrack, setArrangementNotes, setNextActions, and setMaxPatchIdeas whenever you change the plan.",
-      "When creating clips, populate the notes array with pitch, time (beats), duration (beats), velocity, and muted flags so the Live clip is playable.",
-      "Use abletonApplyProjectSettings, abletonUpsertTracks, abletonRemoveTrack, and abletonCaptureSessionSnapshot to control the Live set. Use sampleSearch to find audio samples locally and abletonInsertSampleClip to place them in the arrangement. Call grooveRecipe or maxPatchOutline for creative prompts.",
+      "",
+      "CRITICAL - CREATING PLAYABLE TRACKS:",
+      "When using abletonUpsertTracks, you MUST ALWAYS include:",
+      "1. 'device' - The instrument to load (e.g., 'Drum Rack', 'Wavetable', 'Operator', 'Analog')",
+      "2. 'clips' array with 'notes' - Without notes, the clip will be empty and silent!",
+      "",
+      "Example for a house beat:",
+      '{"name": "Drums", "type": "MIDI", "device": "Drum Rack", "clips": [{"name": "Beat", "length": "4 bars", "notes": [',
+      '  {"pitch": 36, "time": 0, "duration": 0.25, "velocity": 100},',
+      '  {"pitch": 36, "time": 1, "duration": 0.25, "velocity": 100},',
+      '  {"pitch": 36, "time": 2, "duration": 0.25, "velocity": 100},',
+      '  {"pitch": 36, "time": 3, "duration": 0.25, "velocity": 100},',
+      '  {"pitch": 38, "time": 1, "duration": 0.25, "velocity": 90},',
+      '  {"pitch": 38, "time": 3, "duration": 0.25, "velocity": 90},',
+      '  {"pitch": 42, "time": 0, "duration": 0.25, "velocity": 70},',
+      '  {"pitch": 42, "time": 0.5, "duration": 0.25, "velocity": 60},',
+      '  {"pitch": 42, "time": 1, "duration": 0.25, "velocity": 70},',
+      '  {"pitch": 42, "time": 1.5, "duration": 0.25, "velocity": 60}',
+      "]}]}",
+      "",
+      "Drum MIDI pitches: 36=kick, 38=snare, 42=closed hat, 46=open hat, 39=clap, 37=rimshot, 43=low tom, 47=mid tom, 50=high tom",
+      "Time is in beats (0, 0.5, 1, 1.5... where 4 beats = 1 bar in 4/4)",
+      "",
+      "Use abletonApplyProjectSettings, abletonUpsertTracks, abletonRemoveTrack, and abletonCaptureSessionSnapshot to control the Live set.",
+      "Use sampleSearch to find audio samples locally and abletonInsertSampleClip to place them in the arrangement.",
+      "Use workflowCompositionsToAbleton to convert workflow compositions directly to Ableton tracks.",
+      "Call grooveRecipe or maxPatchOutline for creative prompts.",
+      "",
+      "CRITICAL - UI SYNC AFTER ABLETON MUTATIONS:",
+      "All Ableton tools (abletonApplyProjectSettings, abletonUpsertTracks, abletonRemoveTrack, abletonQuickDrums) now return a JSON object with a 'snapshot' field.",
+      "IMMEDIATELY after calling any Ableton tool, you MUST parse the snapshot and call the appropriate frontend actions:",
+      "1. Call setProjectOverview with JSON: {\"tempo\": snapshot.tempo, \"timeSignature\": snapshot.timeSignature, \"genre\": <current genre>}",
+      "2. For each track in snapshot.tracks, call upsertAbletonTrack with JSON: {\"id\": track.name, \"name\": track.name, \"type\": track.type, \"color\": track.colorHex}",
+      "3. For removed tracks, call removeAbletonTrack with the trackId",
+      "This ensures the UI stays synchronized with Ableton Live in real-time. NEVER skip this step!",
+      "",
       "",
       "MUSIC PRODUCTION WORKFLOW:",
       "When creating full tracks, follow these 9 stages using the workflow tools:",
@@ -328,8 +806,10 @@ async function chat_node(state: AgentState, config: RunnableConfig) {
   });
 
   // 5.4 Invoke the model with the system message and the messages in the state
+  const sanitizedMessages = (state.messages as BaseMessage[]).map(normalizeMessageContent);
+
   const response = await modelWithTools.invoke(
-    [systemMessage, ...state.messages],
+    [systemMessage, ...sanitizedMessages],
     config
   );
 
@@ -354,11 +834,90 @@ function shouldContinue({ messages }: AgentState) {
   return "__end__";
 }
 
+// Map device type from snapshot to frontend category
+function mapDeviceTypeToCategory(deviceType: string): string {
+  switch (deviceType) {
+    case "instrument":
+      return "Instrument";
+    case "audioEffect":
+      return "Audio Effect";
+    case "midiEffect":
+      return "MIDI Effect";
+    default:
+      return "Unknown";
+  }
+}
+
+// Helper to extract Ableton snapshot from tool results and build project state update
+function extractProjectUpdateFromToolResults(messages: BaseMessage[]): Partial<AgentState> | null {
+  for (const msg of messages) {
+    if (msg._getType() !== "tool") continue;
+
+    const content = typeof msg.content === "string" ? msg.content : "";
+
+    // Check if this looks like an Ableton tool result with snapshot
+    if (!content.includes('"snapshot"') || !content.includes('"syncRequired"')) continue;
+
+    try {
+      const parsed = JSON.parse(content);
+      if (!parsed.snapshot || !parsed.syncRequired) continue;
+
+      const snapshot = parsed.snapshot as AbletonSessionSnapshot;
+
+      // Build project state update from snapshot
+      return {
+        project: {
+          tempo: snapshot.tempo,
+          timeSignature: snapshot.timeSignature,
+          tracks: snapshot.tracks.map((track) => ({
+            id: track.name,
+            name: track.name,
+            type: track.type === "Unknown" ? "MIDI" : track.type,
+            color: track.colorHex || undefined,
+            devices: track.devices.map((device) => ({
+              name: device.name,
+              category: mapDeviceTypeToCategory(device.type),
+              notes: device.isActive ? undefined : "(bypassed)",
+            })),
+            clips: track.clipNames.map((clipName) => ({
+              name: clipName,
+              length: "4 bars",
+              notes: [],
+            })),
+          })),
+        },
+      };
+    } catch {
+      // Not valid JSON, skip
+    }
+  }
+  return null;
+}
+
 // Define a dynamic tool node that merges static tools with CopilotKit actions
 async function dynamic_tool_node(state: AgentState, config: RunnableConfig) {
   const dynamicTools = convertActionsToDynamicStructuredTools(state.copilotkit?.actions ?? []);
   const node = new ToolNode([...tools, ...dynamicTools]);
-  return node.invoke(state as any, config as any);
+  const result = await node.invoke(state as any, config as any);
+
+  // Auto-sync: Check if any Ableton tools returned snapshots and update project state
+  const resultMessages = result.messages as BaseMessage[] | undefined;
+  if (resultMessages?.length) {
+    const projectUpdate = extractProjectUpdateFromToolResults(resultMessages);
+    if (projectUpdate) {
+      // Merge project update with existing project state
+      const currentProject = state.project ?? {};
+      return {
+        ...result,
+        project: {
+          ...currentProject,
+          ...projectUpdate.project,
+        },
+      };
+    }
+  }
+
+  return result;
 }
 
 // Define the workflow graph
