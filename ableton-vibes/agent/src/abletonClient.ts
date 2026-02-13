@@ -211,6 +211,122 @@ const DEVICE_ALIASES: Record<string, string[]> = {
 
 import type { BrowserItem } from "ableton-js/ns/browser-item";
 
+export type AvailableDevice = {
+  name: string;
+  category: "instruments" | "audio_effects" | "midi_effects" | "drums";
+  folder?: string;
+  isNative: boolean;
+};
+
+// Cache for available devices (browser contents rarely change during session)
+let cachedDevices: AvailableDevice[] | null = null;
+let cacheTimestamp = 0;
+const CACHE_TTL_MS = 60000; // 1 minute cache
+
+/**
+ * List all available devices from Ableton's browser
+ * Results are cached for performance
+ */
+export const listAvailableDevices = async (
+  options?: {
+    category?: "instruments" | "audio_effects" | "midi_effects" | "drums" | "all";
+    searchQuery?: string;
+    forceRefresh?: boolean;
+  }
+): Promise<AvailableDevice[]> => {
+  const instance = await getAbleton();
+  const now = Date.now();
+
+  // Use cache if valid and no force refresh
+  if (cachedDevices && !options?.forceRefresh && (now - cacheTimestamp) < CACHE_TTL_MS) {
+    return filterDevices(cachedDevices, options);
+  }
+
+  const devices: AvailableDevice[] = [];
+  const categories: Array<"instruments" | "audio_effects" | "midi_effects" | "drums"> =
+    ["instruments", "audio_effects", "midi_effects", "drums"];
+
+  const browser = await instance.application.get("browser");
+
+  for (const category of categories) {
+    try {
+      const items = await browser.get(category);
+
+      // Process top-level items
+      for (const item of items) {
+        if (item.raw.is_loadable) {
+          devices.push({
+            name: item.raw.name || "Unknown",
+            category,
+            isNative: isNativeDevice(item.raw.name || ""),
+          });
+        }
+
+        // Process folder contents (one level deep)
+        if (item.raw.is_folder) {
+          try {
+            const children = await item.get("children");
+            for (const child of children) {
+              if (child.raw.is_loadable) {
+                devices.push({
+                  name: child.raw.name || "Unknown",
+                  category,
+                  folder: item.raw.name,
+                  isNative: isNativeDevice(child.raw.name || ""),
+                });
+              }
+            }
+          } catch {
+            // Some folders may not be accessible
+          }
+        }
+      }
+    } catch (error) {
+      console.warn(`Failed to list ${category}:`, error);
+    }
+  }
+
+  // Update cache
+  cachedDevices = devices;
+  cacheTimestamp = now;
+
+  return filterDevices(devices, options);
+};
+
+const filterDevices = (
+  devices: AvailableDevice[],
+  options?: { category?: string; searchQuery?: string }
+): AvailableDevice[] => {
+  let result = devices;
+
+  if (options?.category && options.category !== "all") {
+    result = result.filter(d => d.category === options.category);
+  }
+
+  if (options?.searchQuery) {
+    const query = options.searchQuery.toLowerCase();
+    result = result.filter(d =>
+      d.name.toLowerCase().includes(query) ||
+      (d.folder?.toLowerCase().includes(query))
+    );
+  }
+
+  return result;
+};
+
+const isNativeDevice = (name: string): boolean => {
+  const nativeDevices = [
+    "Wavetable", "Operator", "Analog", "Collision", "Drift", "Electric", "Tension",
+    "Simpler", "Sampler", "Impulse", "Drum Rack",
+    "Reverb", "Delay", "Echo", "Compressor", "Glue Compressor", "EQ Eight", "EQ Three",
+    "Channel EQ", "Saturator", "Limiter", "Gate", "Auto Filter", "Auto Pan",
+    "Chorus-Ensemble", "Phaser-Flanger", "Erosion", "Redux", "Vinyl Distortion",
+    "Utility", "Tuner", "Spectrum", "Arpeggiator", "Chord", "Note Length", "Pitch",
+    "Random", "Scale", "Velocity"
+  ];
+  return nativeDevices.some(native => name.toLowerCase().includes(native.toLowerCase()));
+};
+
 /**
  * Search browser items to find a device by name
  * Returns the full BrowserItem so it can be passed to loadItem

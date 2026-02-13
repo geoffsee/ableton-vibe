@@ -30,6 +30,8 @@ import {
   removeTrackByName,
   AbletonSessionSnapshot,
   DeviceInfo,
+  listAvailableDevices,
+  AvailableDevice,
 } from "./abletonClient";
 import { searchSamples } from "./sampleFinder";
 import { insertSampleAsClip } from "./abletonClient";
@@ -291,6 +293,49 @@ const abletonCaptureSnapshot = tool(
     description:
       "Fetch the current Ableton Live session snapshot (tempo, time signature, playback state, and tracks with clip names). Also triggers UI sync.",
     schema: z.object({}),
+  },
+);
+
+const abletonListDevices = tool(
+  async ({ category, searchQuery, forceRefresh }) => {
+    const devices = await listAvailableDevices({
+      category: category as "instruments" | "audio_effects" | "midi_effects" | "drums" | "all" | undefined,
+      searchQuery,
+      forceRefresh,
+    });
+
+    // Group by category for easier reading
+    const grouped = devices.reduce((acc, device) => {
+      const cat = device.category;
+      if (!acc[cat]) acc[cat] = [];
+      acc[cat].push(device);
+      return acc;
+    }, {} as Record<string, AvailableDevice[]>);
+
+    return JSON.stringify({
+      totalCount: devices.length,
+      byCategory: grouped,
+      hint: "Use the exact device name from this list when creating tracks with abletonUpsertTracks. For instruments, common choices include: Wavetable (synth pads/leads), Operator (FM synthesis), Analog (analog-style synth), Drum Rack (drums/percussion), Simpler (sample-based).",
+    });
+  },
+  {
+    name: "abletonListAvailableDevices",
+    description:
+      "List available instruments and effects from Ableton's browser. IMPORTANT: Call this BEFORE creating tracks to discover what devices are actually available. This prevents creating tracks with unavailable instruments (which would fall back to the user's default).",
+    schema: z.object({
+      category: z
+        .enum(["instruments", "audio_effects", "midi_effects", "drums", "all"])
+        .optional()
+        .describe("Filter by device category. Default is 'all'."),
+      searchQuery: z
+        .string()
+        .optional()
+        .describe("Search for devices by name (e.g., 'synth', 'reverb', 'drum')."),
+      forceRefresh: z
+        .boolean()
+        .optional()
+        .describe("Force refresh the cached device list."),
+    }),
   },
 );
 
@@ -591,6 +636,7 @@ const tools = [
   abletonUpsertTracks,
   abletonRemoveTrack,
   abletonCaptureSnapshot,
+  abletonListDevices,
   abletonQuickDrums,
   workflowCompositionsToAbleton,
   // Music production workflow tools (stages 1-9)
@@ -750,12 +796,30 @@ async function chat_node(state: AgentState, config: RunnableConfig) {
     content: [
       "You are an expert Ableton Live 12 producer paired with Max 9.",
       "Act like a collaborative coproducer: design tracks, device chains, clip concepts, and Max for Live tools.",
+      "",
+      "COMMUNICATION STYLE:",
+      "Always narrate what you're doing so the user can follow along:",
+      "- Before discovering devices: 'Let me check what instruments you have available...'",
+      "- After finding devices: 'Great, I see Wavetable, Drift, and Operator. I'll use Wavetable for this pad.'",
+      "- Before creating tracks: 'Creating a MIDI track with Wavetable and a 4-bar chord progression...'",
+      "- After completion: 'Done! I've added the Pad track with a Cmin7 to Fmaj7 progression.'",
+      "",
       "Coordinate with the frontend actions to keep the workspace up to date.",
       "Prefer calling actions such as setProjectOverview, upsertAbletonTrack, removeAbletonTrack, setArrangementNotes, setNextActions, and setMaxPatchIdeas whenever you change the plan.",
       "",
+      "CRITICAL - DEVICE DISCOVERY BEFORE TRACK CREATION:",
+      "BEFORE creating any tracks with abletonUpsertTracks, you MUST:",
+      "1. Tell the user you're checking available instruments (e.g., 'Let me see what instruments are available...')",
+      "2. Call abletonListAvailableDevices to see what's in their Ableton browser",
+      "3. Briefly mention what you found (e.g., 'Found Wavetable, Drift, Analog... I'll use Wavetable for this.')",
+      "4. Then create the track with the EXACT device name from the list",
+      "",
+      "ALWAYS communicate your steps in chat so the user knows what's happening!",
+      "If you skip device discovery, tracks may be created with the user's default instrument instead of what you intended!",
+      "",
       "CRITICAL - CREATING PLAYABLE TRACKS:",
       "When using abletonUpsertTracks, you MUST ALWAYS include:",
-      "1. 'device' - The instrument to load (e.g., 'Drum Rack', 'Wavetable', 'Operator', 'Analog')",
+      "1. 'device' - The EXACT instrument name from abletonListAvailableDevices (e.g., 'Drift', 'Wavetable', 'Operator')",
       "2. 'clips' array with 'notes' - Without notes, the clip will be empty and silent!",
       "",
       "Example for a house beat:",
