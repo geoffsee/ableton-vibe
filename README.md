@@ -54,7 +54,6 @@ Ableton Vibes guides you through a professional music production workflow in 9 s
 
 ### Stage 1: Brief & Intent
 
-![Brief Wizard](ableton-vibes/docs/screenshots/02-brief-wizard.png)
 
 Define your creative vision before writing a single note.
 
@@ -73,7 +72,6 @@ Define your creative vision before writing a single note.
 
 ### Stage 2: Style Prior
 
-![Style Prior](ableton-vibes/docs/screenshots/03-style-prior.png)
 
 Establish the sonic character and production conventions for your track.
 
@@ -93,7 +91,6 @@ Establish the sonic character and production conventions for your track.
 
 ### Stage 3: Time Base
 
-![Time Base](ableton-vibes/docs/screenshots/04-time-base.png)
 
 Create the rhythmic foundation with groove patterns.
 
@@ -271,7 +268,6 @@ ableton-vibes/
 │       ├── abletonClient.ts  # Ableton Live integration
 │       ├── sampleFinder.ts   # Sample search
 │       └── workflow/         # Workflow types & tools
-└── docs/screenshots/         # UI screenshots
 ```
 
 ## Troubleshooting
