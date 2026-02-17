@@ -1,0 +1,45 @@
+# dependencies
+node_modules
+
+# lockfiles
+bun.lock
+yarn.lock
+package-lock.json
+
+# build output
+out
+dist
+.next
+*.tgz
+*.tsbuildinfo
+
+# code coverage
+coverage
+*.lcov
+
+# logs
+logs
+*.log
+*.pid
+report.*.json
+
+# environment variables
+.env
+.env.*
+
+# caches
+.eslintcache
+.cache
+
+# IDE / editor
+.idea
+.vscode
+
+# OS
+.DS_Store
+
+# playwright
+.playwright-mcp
+
+# git
+.git

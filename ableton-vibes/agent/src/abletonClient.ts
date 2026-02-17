@@ -339,9 +339,13 @@ const findBrowserItem = async (
   const lowerSearch = searchName.toLowerCase();
   const aliases = DEVICE_ALIASES[lowerSearch] || [searchName];
 
+  console.log(`Searching for device "${searchName}" in category "${category}" (aliases: ${aliases.join(", ")})`);
+
   try {
     const browser = await instance.application.get("browser");
     const items = await browser.get(category);
+
+    console.log(`Found ${items.length} top-level items in "${category}"`);
 
     // Search top-level items first
     for (const item of items) {
@@ -350,6 +354,7 @@ const findBrowserItem = async (
       for (const alias of aliases) {
         if (itemName === alias.toLowerCase() || itemName.includes(alias.toLowerCase())) {
           if (item.raw.is_loadable) {
+            console.log(`Found loadable device: "${item.raw.name}" (top-level)`);
             return item;
           }
         }
@@ -367,6 +372,7 @@ const findBrowserItem = async (
             for (const alias of aliases) {
               if (childName === alias.toLowerCase() || childName.includes(alias.toLowerCase())) {
                 if (child.raw.is_loadable) {
+                  console.log(`Found loadable device: "${child.raw.name}" in folder "${item.raw.name}"`);
                   return child;
                 }
               }
@@ -377,6 +383,8 @@ const findBrowserItem = async (
         }
       }
     }
+
+    console.log(`Device "${searchName}" not found in "${category}"`);
   } catch (error) {
     console.warn(`Failed to search browser for "${searchName}":`, error);
   }
@@ -394,7 +402,10 @@ const loadDeviceOnTrack = async (
 ): Promise<boolean> => {
   // First, select the track so the device loads onto it
   try {
-    await instance.song.view.set("selected_track", track.raw.id);
+    // Use the track object directly, not raw.id
+    await instance.song.view.set("selected_track", track);
+    // Small delay to ensure track is selected before loading device
+    await new Promise(resolve => setTimeout(resolve, 100));
   } catch (error) {
     console.warn("Failed to select track:", error);
     return false;
@@ -410,14 +421,26 @@ const loadDeviceOnTrack = async (
   }
 
   if (!item) {
-    console.warn(`Device "${deviceName}" not found in browser`);
+    console.warn(`Device "${deviceName}" not found in browser. Available devices may not have loaded yet.`);
     return false;
   }
 
   try {
     const browser = await instance.application.get("browser");
+    console.log(`Loading device "${deviceName}" onto track...`);
     await browser.loadItem(item);
-    return true;
+    // Wait for device to load
+    await new Promise(resolve => setTimeout(resolve, 200));
+
+    // Verify device was loaded by checking track devices
+    const devices = await track.get("devices");
+    if (devices.length > 0) {
+      console.log(`Successfully loaded device "${deviceName}"`);
+      return true;
+    } else {
+      console.warn(`Device "${deviceName}" load command sent but no device appeared on track`);
+      return false;
+    }
   } catch (error) {
     console.warn(`Failed to load device "${deviceName}":`, error);
     return false;
@@ -705,9 +728,15 @@ export const applyTrackBlueprint = async (blueprint: TrackBlueprint, beatsPerBar
 
   // Load device if specified (only for new tracks or if explicitly requested)
   if (blueprint.device && (isNewTrack || !existingTrack)) {
+    // Wait a bit for the new track to be fully initialized
+    if (isNewTrack) {
+      await new Promise(resolve => setTimeout(resolve, 150));
+    }
+
+    console.log(`Attempting to load device "${blueprint.device}" on track "${blueprint.name}"...`);
     const deviceLoaded = await loadDeviceOnTrack(instance, workingTrack, blueprint.device);
     if (!deviceLoaded) {
-      console.warn(`Could not load device "${blueprint.device}" on track "${blueprint.name}"`);
+      console.warn(`Could not load device "${blueprint.device}" on track "${blueprint.name}". Track will be created without an instrument.`);
     }
   }
 
