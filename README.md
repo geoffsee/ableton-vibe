@@ -1,8 +1,8 @@
-# Ableton Vibes
+# ableton-vibe
 
 An AI-powered music production assistant for Ableton Live 12 + Max 9. Create complete tracks from scratch using a guided 9-stage workflow powered by LangGraph and CopilotKit.
 
-![Overview](ableton-vibes/docs/screenshots/01-overview.png)
+![ableton-vibe](./ableton-vibe.png)
 
 ## Features
 

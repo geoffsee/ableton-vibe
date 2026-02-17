@@ -22,3 +22,17 @@ body,
 html {
   height: 100%;
 }
+
+/* Dark theme for CopilotKit chat */
+.copilotKitChat {
+  --copilot-kit-background-color: rgb(15 23 42 / 0.95);
+  --copilot-kit-secondary-color: rgb(30 41 59);
+  --copilot-kit-secondary-contrast-color: rgb(226 232 240);
+  --copilot-kit-contrast-color: rgb(241 245 249);
+  --copilot-kit-input-background-color: rgb(30 41 59);
+  --copilot-kit-muted-color: rgb(100 116 139);
+  --copilot-kit-separator-color: rgb(51 65 85);
+  --copilot-kit-response-button-background-color: rgb(30 41 59);
+  --copilot-kit-response-button-color: rgb(148 163 184);
+  color: rgb(226 232 240);
+}

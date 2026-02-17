@@ -1,7 +1,7 @@
 "use client";
 
 import { useCoAgent, useCopilotAction } from "@copilotkit/react-core";
-import { CopilotKitCSSProperties, CopilotSidebar } from "@copilotkit/react-ui";
+import { CopilotKitCSSProperties, CopilotChat } from "@copilotkit/react-ui";
 import { useMemo, useState } from "react";
 
 // Types
@@ -28,6 +28,9 @@ import {
   WORKFLOW_STAGES,
   STAGE_CONFIG,
 } from "./components/types";
+
+// Utilities
+import { exportProjectAsMidi, projectHasMidiNotes } from "./lib/midiExport";
 
 // Components
 import { WorkflowStepper } from "./components/workflow";
@@ -87,15 +90,7 @@ export default function CopilotKitPage() {
       className="min-h-screen bg-slate-950"
     >
       <AbletonWorkflowBuilder themeColor={themeColor} />
-      <CopilotSidebar
-        clickOutsideToClose={false}
-        defaultOpen
-        labels={{
-          title: "Ableton Live Copilot",
-          initial:
-            "Hi producer! I'm ready to help you create music from scratch.\n\nFollow the 9-stage workflow to build your track:\n1. Brief & Intent - Define your vision\n2. Style Prior - Set sonic character\n3. Time Base - Establish groove\n4. Palette - Curate sounds\n5. Motifs - Generate ideas\n6. Structure - Design arrangement\n7. Compose - Orchestrate sections\n8. Variations - Add ear candy\n9. Mix - Design the final sound\n\nTell me about the music you want to create!",
-        }}
-      />
+      <BottomChat themeColor={themeColor} />
     </main>
   );
 }
@@ -500,7 +495,7 @@ function AbletonWorkflowBuilder({ themeColor }: { themeColor: string }) {
   };
 
   return (
-    <div className="px-4 py-6 md:px-8 lg:px-12 text-white">
+    <div className="px-4 py-6 pb-96 md:px-8 lg:px-12 text-white">
       <div className="mx-auto max-w-6xl flex flex-col gap-6">
         {/* Workflow Stepper */}
         <WorkflowStepper
@@ -516,9 +511,18 @@ function AbletonWorkflowBuilder({ themeColor }: { themeColor: string }) {
             {/* Project header card */}
             <div className="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur">
               <div className="text-xs uppercase tracking-widest text-white/50 mb-1">Project</div>
-              <h1 className="text-xl font-bold text-white mb-2">
-                {project.projectName || "New Production"}
-              </h1>
+              <div className="flex items-center gap-3 mb-2">
+                <h1 className="text-xl font-bold text-white">
+                  {project.projectName || "New Production"}
+                </h1>
+                <button
+                  onClick={() => exportProjectAsMidi(project)}
+                  disabled={!projectHasMidiNotes(project)}
+                  className="rounded-lg bg-white/10 px-2.5 py-1 text-[11px] font-medium text-white/70 transition-colors hover:bg-white/20 hover:text-white disabled:opacity-30 disabled:pointer-events-none"
+                >
+                  Export MIDI
+                </button>
+              </div>
               {project.vibe && (
                 <p className="text-sm text-white/60 mb-3">{project.vibe}</p>
               )}
@@ -668,4 +672,36 @@ function getStageDescription(stage: WorkflowStage): string {
       "Design levels, spatial positioning, and the master chain.",
   };
   return descriptions[stage];
+}
+
+function BottomChat({ themeColor }: { themeColor: string }) {
+  const [open, setOpen] = useState(true);
+
+  return (
+    <div className="fixed bottom-0 inset-x-0 z-50 flex flex-col items-center pointer-events-none">
+      {/* Toggle button */}
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="pointer-events-auto mb-0 rounded-t-lg bg-slate-800 border border-b-0 border-white/10 px-4 py-1.5 text-xs font-medium text-white/70 hover:text-white hover:bg-slate-700 transition-colors"
+      >
+        {open ? "Hide Chat" : "Show Chat"}
+      </button>
+      {/* Chat panel */}
+      {open && (
+        <div
+          className="pointer-events-auto w-full max-w-4xl border-t border-white/10 bg-slate-900/95 backdrop-blur-md shadow-2xl"
+          style={{ height: "340px" }}
+        >
+          <CopilotChat
+            className="h-full"
+            labels={{
+              title: "Ableton Live Copilot",
+              initial:
+                "Hi producer! I'm ready to help you create music from scratch.\n\nFollow the 9-stage workflow to build your track:\n1. Brief & Intent - Define your vision\n2. Style Prior - Set sonic character\n3. Time Base - Establish groove\n4. Palette - Curate sounds\n5. Motifs - Generate ideas\n6. Structure - Design arrangement\n7. Compose - Orchestrate sections\n8. Variations - Add ear candy\n9. Mix - Design the final sound\n\nTell me about the music you want to create!",
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
 }
